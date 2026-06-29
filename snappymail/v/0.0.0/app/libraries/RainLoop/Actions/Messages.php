@@ -73,7 +73,7 @@ trait Messages
 //		$oParams->bUseSort = $this->ImapClient()->hasCapability('SORT');
 		$oParams->bUseSort = true;
 
-		if ($sHash) {
+		if ($sHash && 'AllUnread' !== $oParams->sFolderName) {
 			$oInfo = $this->ImapClient()->FolderStatusAndSelect($oParams->sFolderName);
 			$aRequestHash = \explode('-', $sHash);
 			$sNewHash = $oParams->hash() . '-' . $oInfo->etag;

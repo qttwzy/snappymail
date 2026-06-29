@@ -98,6 +98,12 @@ export const
 	mailbox = (inboxFolderName = 'INBOX') => HASH_PREFIX + 'mailbox/' + inboxFolderName,
 
 	/**
+	 * @param {string=} viewName = ''
+	 * @returns {string}
+	 */
+	mailboxSpecial = (viewName = '') => HASH_PREFIX + 'mailbox' + (viewName ? '/' + viewName : ''),
+
+	/**
 	 * @param {string=} screenName = ''
 	 * @returns {string}
 	 */

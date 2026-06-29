@@ -7,12 +7,12 @@
 		<a class="btn buttonContacts fontastic" data-bind="visible: allowContacts, click: contactsClick" data-i18n="[title]GLOBAL/CONTACTS">📇</a>
 	</div>
 	<div class="b-content">
-		<ul class="b-folders-system" data-bind="foreach: systemFolders">
-			<li>
-				<a data-bind="dropmessages: $data,
+	<ul class="b-folders-system" data-bind="foreach: systemFolders">
+		<li>
+			<a data-bind="dropmessages: canBeDropped() ? $data : null,
 					css: { 'selected': selected, 'selectable': selectable, 'anim-action-class': actionBlink, 'is-flagged': isFlagged },
 					attr: { 'data-icon': icon, 'data-unread': unreadCount }">
-					<!-- ko text: localName --><!-- /ko -->
+				<!-- ko text: localName --><!-- /ko -->
 					<!-- ko if: isInbox -->
 					<span class="flag-icon fontastic"></span>
 					<!-- /ko -->

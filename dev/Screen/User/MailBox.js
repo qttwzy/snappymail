@@ -123,6 +123,9 @@ export class MailBoxUserScreen extends AbstractScreen {
 			fNormS = (request, vals) => [folder(request, vals), request ? pInt(vals[1]) : 1, decodeURI(pString(vals[2]))];
 
 		return [
+			// Virtual: AllUnread
+			[/^(AllUnread)$/, { normalize_: (request) => [pString(request[0]), 1, '', 0] }],
+			[/^(AllUnread)\/(.+)\/?$/, { normalize_: (request, vals) => [pString(vals[0]), 1, decodeURI(pString(vals[1]))] }],
 			// Folder: INBOX | INBOX.sub | Sent | fullNameHash
 			[/^([^/]*)$/, { normalize_: fNormS }],
 			// Search: {folder}/{string}

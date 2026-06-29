@@ -6,6 +6,7 @@ import { UNUSED_OPTION_VALUE } from 'Common/Consts';
 import { forEachObjectEntry } from 'Common/Utils';
 import { getFolderInboxName, getFolderFromCacheList } from 'Common/Cache';
 import { Settings, SettingsCapa } from 'Common/Globals';
+import { mailBox } from 'Common/Links';
 //import Remote from 'Remote/User/Fetch'; // Circular dependency
 
 export const
@@ -49,6 +50,51 @@ isAllowedKeyword = value => '\\' != value[0] && !ignoredKeywords.includes(value.
 FolderUserStore = new class {
 	constructor() {
 		const self = this;
+		const createAllUnreadFolder = () => {
+			const folder = {
+				fullName: 'AllUnread',
+				fullNameHash: 'AllUnread',
+				etag: '',
+				exists: true,
+				attributes: ko.observableArray(),
+				permanentFlags: ko.observableArray(),
+				metadata: {},
+				selectable: ko.observable(true),
+				actionBlink: ko.observable(false).extend({ falseTimeout: 1000 })
+			};
+
+			addObservablesTo(folder, {
+				selected: false,
+				focused: false,
+				askDelete: false,
+				errorMsg: '',
+				totalEmails: 0,
+				unreadEmails: 0,
+				collapsed: false,
+				tagsAllowed: false
+			});
+
+			addComputablesTo(folder, {
+				isInbox: () => false,
+				isFlagged: () => false,
+				isSystemFolder: () => false,
+				canBeSelected: () => folder.selectable(),
+				canBeDeleted: () => false,
+				canBeSubscribed: () => false,
+				canBeDropped: () => false,
+				hasVisibleSubfolders: () => false,
+				visibleSubfolders: () => [],
+				hasUnreadInSub: () => false,
+				optionalTags: () => [],
+				unreadCount: () => folder.unreadEmails() || null,
+				localName: () => 'All Unread',
+				icon: () => '📨',
+				href: () => mailBox('AllUnread')
+			});
+
+			return folder;
+		};
+
 		addObservablesTo(self, {
 			/**
 			 * To use "checkable" option in /#/settings/folders
@@ -84,6 +130,7 @@ FolderUserStore = new class {
 		self.namespace = '';
 
 		self.folderList = ko.observableArray(/*new FolderCollectionModel*/);
+		self.allUnreadFolder = createAllUnreadFolder();
 
 		self.capabilities = ko.observableArray();
 
@@ -100,7 +147,7 @@ FolderUserStore = new class {
 				self.foldersLoading() | self.foldersCreating() | self.foldersDeleting() | self.foldersRenaming(),
 
 			systemFoldersNames: () => {
-				const list = [getFolderInboxName()],
+				const list = [getFolderInboxName(), 'AllUnread'],
 				others = [self.sentFolder(), self.draftsFolder(), self.spamFolder(), self.trashFolder(), self.archiveFolder()];
 
 				self.folderList().length &&
@@ -110,7 +157,9 @@ FolderUserStore = new class {
 			},
 
 			systemFolders: () =>
-				self.systemFoldersNames().map(name => getFolderFromCacheList(name)).filter(v => v)
+				self.systemFoldersNames().map(name =>
+					'AllUnread' === name ? self.allUnreadFolder : getFolderFromCacheList(name)
+				).filter(v => v)
 		});
 
 		const

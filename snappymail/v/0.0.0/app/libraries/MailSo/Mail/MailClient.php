@@ -32,6 +32,8 @@ class MailClient
 
 	private bool $bThreadSort = false;
 
+	private const MESSAGE_CACHE_TTL = 604800;
+
 	function __construct()
 	{
 		$this->oImapClient = new \MailSo\Imap\ImapClient;
@@ -108,6 +110,134 @@ class MailClient
 		return FetchType::BuildBodyCustomHeaderRequest($aHeaders, true);
 	}
 
+	private function getAllUnreadFolderInfo() : FolderInformation
+	{
+		$oInfo = $this->oImapClient->FolderStatus('INBOX');
+		$oInfo->FullName = 'AllUnread';
+		$oInfo->MESSAGES = 0;
+		$oInfo->UNSEEN = 0;
+		$oInfo->UIDNEXT = 0;
+		$oInfo->UIDVALIDITY = 0;
+		$oInfo->hasStatus = true;
+		return $oInfo;
+	}
+
+	private function getMessageCacheKey(string $sFolderName, int $iIndex, bool $bIndexIsUid, ?string $sFolderHash = null) : string
+	{
+		return 'Message/' . ($sFolderHash ?: $this->FolderHash($sFolderName)) . '/' . ($bIndexIsUid ? 'U' : 'I') . '/' . $iIndex;
+	}
+
+	private function getCachedMessage(string $sFolderName, int $iIndex, bool $bIndexIsUid, ?\MailSo\Cache\CacheClient $oCacher, ?string $sFolderHash = null) : ?Message
+	{
+		if (!$oCacher || !$oCacher->IsInited()) {
+			return null;
+		}
+
+		$sSerialized = $oCacher->Get($this->getMessageCacheKey($sFolderName, $iIndex, $bIndexIsUid, $sFolderHash));
+		if (!\is_string($sSerialized) || '' === $sSerialized) {
+			return null;
+		}
+
+		$aCached = \json_decode($sSerialized, true);
+		if (!\is_array($aCached) || empty($aCached['cachedAt']) || empty($aCached['payload'])) {
+			$oCacher->Delete($this->getMessageCacheKey($sFolderName, $iIndex, $bIndexIsUid, $sFolderHash));
+			return null;
+		}
+
+		if (self::MESSAGE_CACHE_TTL < \time() - (int) $aCached['cachedAt']) {
+			$oCacher->Delete($this->getMessageCacheKey($sFolderName, $iIndex, $bIndexIsUid, $sFolderHash));
+			return null;
+		}
+
+		$oMessage = @\unserialize($aCached['payload'], ['allowed_classes' => true]);
+		return $oMessage instanceof Message ? $oMessage : null;
+	}
+
+	private function cacheMessage(string $sFolderName, int $iIndex, bool $bIndexIsUid, ?\MailSo\Cache\CacheClient $oCacher, Message $oMessage, ?string $sFolderHash = null) : void
+	{
+		if (!$oCacher || !$oCacher->IsInited()) {
+			return;
+		}
+
+		$oCacher->Set(
+			$this->getMessageCacheKey($sFolderName, $iIndex, $bIndexIsUid, $sFolderHash),
+			\json_encode([
+				'cachedAt' => \time(),
+				'payload' => \serialize($oMessage)
+			])
+		);
+	}
+
+	private function MessageListAllUnread(MessageListParams $oParams) : MessageCollection
+	{
+		$oMessageCollection = new MessageCollection;
+		$oMessageCollection->FolderName = $oParams->sFolderName;
+		$oMessageCollection->Offset = $oParams->iOffset;
+		$oMessageCollection->Limit = $oParams->iLimit;
+		$oMessageCollection->Search = $oParams->sSearch;
+		$oMessageCollection->ThreadUid = 0;
+
+		$oInfo = $this->getAllUnreadFolderInfo();
+		$oMessageCollection->FolderInfo = $oInfo;
+
+		$aRows = [];
+		$oFolders = $this->Folders('', '*', false);
+		if ($oFolders) {
+			foreach ($oFolders as $oFolder) {
+				if (!$oFolder->Selectable()) {
+					continue;
+				}
+
+				try
+				{
+					$oFolderInfo = $this->oImapClient->FolderStatus($oFolder->FullName);
+					if (!$oFolderInfo->UNSEEN) {
+						continue;
+					}
+
+					$oFolderParams = new MessageListParams;
+					$oFolderParams->sFolderName = $oFolder->FullName;
+					$oFolderParams->sSearch = $oParams->sSearch;
+					$oFolderParams->oCacher = $oParams->oCacher;
+					$oFolderParams->bUseSort = false;
+					$oFolderParams->bUseThreads = false;
+					$oFolderParams->bHideDeleted = $oParams->bHideDeleted;
+
+					$aUnreadUids = $this->MessageListUnseen($oFolderParams, $oFolderInfo);
+					if (!$aUnreadUids) {
+						continue;
+					}
+
+					foreach ($aUnreadUids as $iUid) {
+						$oMessage = $this->Message($oFolder->FullName, (int) $iUid, true, $oParams->oCacher);
+						if ($oMessage) {
+							$aRows[] = $oMessage;
+						}
+					}
+				}
+				catch (\Throwable $oException)
+				{
+					\SnappyMail\Log::warning('MailClient', 'AllUnread ' . $oFolder->FullName . ' ' . $oException->getMessage());
+				}
+			}
+		}
+
+		if ($oParams->sSearch) {
+			$aRows = \array_values(\array_filter($aRows, function(Message $oMessage) use ($oParams) {
+				$sNeedle = \mb_strtolower($oParams->sSearch);
+				return \str_contains(\mb_strtolower($oMessage->Subject()), $sNeedle)
+					|| ($oMessage->From() && \str_contains(\mb_strtolower($oMessage->From()->ToString()), $sNeedle));
+			}));
+		}
+
+		$oMessageCollection->totalEmails = \count($aRows);
+		$oInfo->MESSAGES = $oMessageCollection->totalEmails;
+		$oInfo->UNSEEN = $oMessageCollection->totalEmails;
+		$oMessageCollection->exchangeArray(\array_slice($aRows, $oParams->iOffset, $oParams->iLimit));
+
+		return $oMessageCollection;
+	}
+
 	/**
 	 * @throws \InvalidArgumentException
 	 * @throws \MailSo\RuntimeException
@@ -137,6 +267,14 @@ class MailClient
 	{
 		if (1 > $iIndex) {
 			throw new \ValueError;
+		}
+
+		$sFolderHash = null;
+		if ($oCacher && $oCacher->IsInited()) {
+			$sFolderHash = $this->FolderHash($sFolderName);
+			if ($sCachedMessage = $this->getCachedMessage($sFolderName, $iIndex, $bIndexIsUid, $oCacher, $sFolderHash)) {
+				return $sCachedMessage;
+			}
 		}
 
 		$this->oImapClient->FolderExamine($sFolderName);
@@ -173,9 +311,16 @@ class MailClient
 
 		$aFetchResponse = $this->oImapClient->Fetch($aFetchItems, $iIndex, $bIndexIsUid);
 
-		return \count($aFetchResponse)
-			? Message::fromFetchResponse($sFolderName, $aFetchResponse[0], $oBodyStructure)
-			: null;
+		if (!\count($aFetchResponse)) {
+			return null;
+		}
+
+		$oMessage = Message::fromFetchResponse($sFolderName, $aFetchResponse[0], $oBodyStructure);
+		if ($oMessage) {
+			$this->cacheMessage($sFolderName, $iIndex, $bIndexIsUid, $oCacher, $oMessage, $sFolderHash);
+		}
+
+		return $oMessage;
 	}
 
 	/**
@@ -272,7 +417,7 @@ class MailClient
 						$callback
 					)), $iIndex, true);
 			} else {
-				throw $e;
+				throw $oException;
 			}
 		}
 
@@ -351,6 +496,14 @@ class MailClient
 	 */
 	public function FolderInformation(string $sFolderName, int $iPrevUidNext = 0, ?SequenceSet $oRange = null) : array
 	{
+		if ('AllUnread' === $sFolderName) {
+			$aInfo = $this->getAllUnreadFolderInfo()->jsonSerialize();
+			if ($iPrevUidNext) {
+				$aInfo['newMessages'] = array();
+			}
+			return $aInfo;
+		}
+
 		if ($oRange) {
 //			$aInfo = $this->oImapClient->FolderExamine($sFolderName)->jsonSerialize();
 			$aInfo = $this->oImapClient->FolderStatusAndSelect($sFolderName)->jsonSerialize();
@@ -761,6 +914,9 @@ class MailClient
 		}
 
 		$sSearch = \trim($oParams->sSearch);
+		if ('AllUnread' === $oParams->sFolderName) {
+			return $this->MessageListAllUnread($oParams);
+		}
 
 		$oMessageCollection = new MessageCollection;
 		$oMessageCollection->FolderName = $oParams->sFolderName;

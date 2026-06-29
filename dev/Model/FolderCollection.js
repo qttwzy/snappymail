@@ -36,6 +36,7 @@ const
 
 	normalizeFolder = sFolderFullName => ('' === sFolderFullName
 		|| UNUSED_OPTION_VALUE === sFolderFullName
+		|| 'AllUnread' === sFolderFullName
 		|| null !== getFolderFromCacheList(sFolderFullName))
 			? sFolderFullName
 			: '',
@@ -93,12 +94,13 @@ export const
 	/**
 	 * @param {?Function} fCallback
 	 */
-	loadFolders = fCallback => {
+		loadFolders = fCallback => {
 //		clearTimeout(this.foldersTimeout);
 		Remote.abort('Folders')
 			.post('Folders', FolderUserStore.foldersLoading)
 			.then(data => {
 				clearCache();
+				setFolder(FolderUserStore.allUnreadFolder);
 				FolderCollectionModel.reviveFromJson(data.Result)?.storeIt();
 				fCallback?.(true);
 				// Repeat every 15 minutes?
@@ -410,6 +412,8 @@ export class FolderModel extends AbstractModel {
 
 			canBeDeleted: () => this.canBeSelected() && this.exists,
 
+			canBeDropped: () => this.canBeSelected() && 'AllUnread' !== this.fullName,
+
 			canBeSubscribed: () => this.selectable()
 				&& !(this.isSystemFolder() | !SettingsUserStore.hideUnsubscribed()),
 
@@ -489,9 +493,11 @@ export class FolderModel extends AbstractModel {
 					folder => folder.unreadEmails() | folder.hasUnreadInSub()
 				),
 
-			href: () => this.canBeSelected() && mailBox(this.fullNameHash)
-		});
-	}
+				href: () => 'AllUnread' === this.fullName
+					? mailBox('AllUnread')
+					: this.canBeSelected() && mailBox(this.fullNameHash)
+			});
+		}
 
 	edit() {
 		showScreenPopup(FolderPopupView, [this]);
