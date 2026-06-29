@@ -126,7 +126,7 @@ services:
 
   # MySQL database
   db:
-    image: mysql:5.7
+    image: mariadb:10.11
     restart: always
     environment:
       - MYSQL_ROOT_PASSWORD=root
