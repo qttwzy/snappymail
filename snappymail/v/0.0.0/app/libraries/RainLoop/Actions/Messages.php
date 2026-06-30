@@ -465,21 +465,31 @@ trait Messages
 	public function DoMessage() : array
 	{
 		$aValues = $this->decodeRawKey((string) $this->GetActionParam('RawKey', ''));
+		$sAccountHash = '';
 		if ($aValues && 2 <= \count($aValues)) {
 			$sFolder = (string) $aValues[0];
 			$iUid = (int) $aValues[1];
-//			$useThreads = !empty($aValues[2]);
-//			$accountHash = $aValues[3];
+			$useThreads = !empty($aValues[2]);
+			$sAccountHash = (string) ($aValues['accountHash'] ?? ($aValues[3] ?? ''));
 		} else {
 			$sFolder = $this->GetActionParam('folder', '');
 			$iUid = (int) $this->GetActionParam('uid', 0);
+			$sAccountHash = (string) $this->GetActionParam('accountHash', '');
 		}
 
-		$oAccount = $this->initMailClientConnection();
+		if ($sAccountHash) {
+			$oAccount = $this->getAccountByHash($sAccountHash);
+			if (!$oAccount) {
+				throw new ClientException(Notifications::AccountNotAllowed);
+			}
+			$this->imapConnect($oAccount);
+		} else {
+			$oAccount = $this->initMailClientConnection();
+		}
 
 		try
 		{
-			$oMessage = $this->MailClient()->Message($sFolder, $iUid, true, $this->Cacher($oAccount));
+			$oMessage = $this->MailClient()->Message($sFolder, $iUid, true, $this->Cacher($oAccount), $oAccount->Hash());
 			if (!$oMessage) {
 				throw new \RuntimeException('Message not found');
 			}
@@ -575,7 +585,7 @@ trait Messages
 			throw new ClientException(Notifications::CantGetMessage, $oException);
 		}
 
-		$ETag = $oMessage->ETag($this->getAccountFromToken()->ImapUser());
+		$ETag = $oMessage->ETag($oAccount->ImapUser());
 		$this->verifyCacheByKey($ETag);
 		$this->Plugins()->RunHook('filter.result-message', array($oMessage));
 		$this->cacheByKey($ETag);
@@ -587,7 +597,16 @@ trait Messages
 	 */
 	public function DoMessageDelete() : array
 	{
-		$this->initMailClientConnection();
+		$sAccountHash = (string) $this->GetActionParam('accountHash', '');
+		if ($sAccountHash) {
+			$oAccount = $this->getAccountByHash($sAccountHash);
+			if (!$oAccount) {
+				throw new ClientException(Notifications::AccountNotAllowed);
+			}
+			$this->imapConnect($oAccount);
+		} else {
+			$this->initMailClientConnection();
+		}
 
 		$sFolder = $this->GetActionParam('folder', '');
 		$aUids = \explode(',', (string) $this->GetActionParam('uids', ''));
@@ -611,7 +630,16 @@ trait Messages
 	 */
 	public function DoMessageMove() : array
 	{
-		$this->initMailClientConnection();
+		$sAccountHash = (string) $this->GetActionParam('accountHash', '');
+		if ($sAccountHash) {
+			$oAccount = $this->getAccountByHash($sAccountHash);
+			if (!$oAccount) {
+				throw new ClientException(Notifications::AccountNotAllowed);
+			}
+			$this->imapConnect($oAccount);
+		} else {
+			$this->initMailClientConnection();
+		}
 
 		$sFromFolder = $this->GetActionParam('fromFolder', '');
 		$sToFolder = $this->GetActionParam('toFolder', '');
@@ -668,7 +696,16 @@ trait Messages
 	 */
 	public function DoMessageCopy() : array
 	{
-		$this->initMailClientConnection();
+		$sAccountHash = (string) $this->GetActionParam('accountHash', '');
+		if ($sAccountHash) {
+			$oAccount = $this->getAccountByHash($sAccountHash);
+			if (!$oAccount) {
+				throw new ClientException(Notifications::AccountNotAllowed);
+			}
+			$this->imapConnect($oAccount);
+		} else {
+			$this->initMailClientConnection();
+		}
 
 		$sToFolder = $this->GetActionParam('toFolder', '');
 
@@ -881,7 +918,16 @@ trait Messages
 
 	private function messageSetFlag(string $sMessageFlag, bool $bSkipUnsupportedFlag = false) : array
 	{
-		$this->initMailClientConnection();
+		$sAccountHash = (string) $this->GetActionParam('accountHash', '');
+		if ($sAccountHash) {
+			$oAccount = $this->getAccountByHash($sAccountHash);
+			if (!$oAccount) {
+				throw new ClientException(Notifications::AccountNotAllowed);
+			}
+			$this->imapConnect($oAccount);
+		} else {
+			$this->initMailClientConnection();
+		}
 
 		try
 		{

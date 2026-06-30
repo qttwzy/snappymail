@@ -9,14 +9,13 @@ trait Raw
 	 */
 	public function RawViewAsPlain() : bool
 	{
-		$oAccount = $this->getAccountFromToken();
 		$sRawKey = $this->GetActionParam('RawKey', '');
 		$aValues = $this->decodeRawKey($sRawKey);
-		if (!empty($aValues['folder']) && !empty($aValues['uid'])
-		 && !empty($aValues['accountHash']) && $aValues['accountHash'] === $oAccount->Hash()
-		) {
+		$sAccountHash = (string) ($aValues['accountHash'] ?? '');
+		$oAccount = $sAccountHash ? $this->getAccountByHash($sAccountHash) : $this->getAccountFromToken();
+		if ($oAccount && !empty($aValues['folder']) && !empty($aValues['uid'])) {
 			$this->verifyCacheByKey($sRawKey);
-			$this->initMailClientConnection();
+			$this->imapConnect($oAccount);
 			\header('Content-Type: text/plain');
 			return $this->MailClient()->MessageMimeStream(
 				function ($rResource) use ($sRawKey) {
@@ -96,9 +95,10 @@ trait Raw
 	{
 		$sRawKey = (string) $this->GetActionParam('RawKey', '');
 
-		$oAccount = $this->getAccountFromToken();
 		$aValues = $this->decodeRawKey($sRawKey);
-		if (empty($aValues['accountHash']) || $aValues['accountHash'] !== $oAccount->Hash()) {
+		$sAccountHash = (string) ($aValues['accountHash'] ?? '');
+		$oAccount = $sAccountHash ? $this->getAccountByHash($sAccountHash) : $this->getAccountFromToken();
+		if (!$oAccount) {
 			return false;
 		}
 
@@ -148,7 +148,7 @@ trait Raw
 			return false;
 		}
 
-		$this->initMailClientConnection();
+		$this->imapConnect($oAccount);
 
 		$self = $this;
 		return $this->MailClient()->MessageMimeStream(

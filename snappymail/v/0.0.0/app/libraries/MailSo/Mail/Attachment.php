@@ -23,12 +23,15 @@ class Attachment implements \JsonSerializable
 
 	private int $iUid;
 
+	private string $sAccountHash = '';
+
 	private ?BodyStructure $oBodyStructure;
 
-	function __construct(string $sFolder, int $iUid, BodyStructure $oBodyStructure)
+	function __construct(string $sFolder, int $iUid, BodyStructure $oBodyStructure, string $sAccountHash = '')
 	{
 		$this->sFolder = $sFolder;
 		$this->iUid = $iUid;
+		$this->sAccountHash = $sAccountHash;
 		$this->oBodyStructure = $oBodyStructure;
 	}
 
@@ -62,7 +65,8 @@ class Attachment implements \JsonSerializable
 		return \array_merge([
 			'@Object' => 'Object/Attachment',
 			'folder' => $this->sFolder,
-			'uid' => $this->iUid
+			'uid' => $this->iUid,
+			'accountHash' => $this->sAccountHash
 		], $this->oBodyStructure->jsonSerialize());
 	}
 }

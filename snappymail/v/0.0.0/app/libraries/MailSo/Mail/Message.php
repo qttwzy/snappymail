@@ -24,6 +24,7 @@ class Message implements \JsonSerializable
 {
 	private string
 		$sFolder = '',
+		$sAccountHash = '',
 		$sSubject = '',
 		$sMessageId = '',
 		$sContentType = '',
@@ -137,7 +138,7 @@ class Message implements \JsonSerializable
 		$this->aThreadUnseenUIDs = $aUnseenUIDs;
 	}
 
-	public static function fromFetchResponse(string $sFolder, \MailSo\Imap\FetchResponse $oFetchResponse, ?\MailSo\Imap\BodyStructure $oBodyStructure = null) : self
+	public static function fromFetchResponse(string $sFolder, \MailSo\Imap\FetchResponse $oFetchResponse, ?\MailSo\Imap\BodyStructure $oBodyStructure = null, string $sAccountHash = '') : self
 	{
 		$oMessage = new self;
 
@@ -148,6 +149,7 @@ class Message implements \JsonSerializable
 		$aFlags = $oFetchResponse->GetFetchValue(FetchType::FLAGS) ?: [];
 
 		$oMessage->sFolder = $sFolder;
+		$oMessage->sAccountHash = $sAccountHash;
 		$oMessage->Uid = (int) $oFetchResponse->GetFetchValue(FetchType::UID);
 		$oMessage->iSize = (int) $oFetchResponse->GetFetchValue(FetchType::RFC822_SIZE);
 //		$oMessage->aFlags = $aFlags;
@@ -450,7 +452,7 @@ class Message implements \JsonSerializable
 				foreach ($gAttachmentsParts as /* @var $oAttachmentItem \MailSo\Imap\BodyStructure */ $oAttachmentItem) {
 //					if ('application/pgp-keys' === $oAttachmentItem->ContentType()) import ???
 					$oMessage->Attachments->append(
-						new Attachment($oMessage->sFolder, $oMessage->Uid, $oAttachmentItem)
+						new Attachment($oMessage->sFolder, $oMessage->Uid, $oAttachmentItem, $oMessage->sAccountHash)
 					);
 				}
 			}
@@ -467,6 +469,7 @@ class Message implements \JsonSerializable
 	{
 		return \md5('MessageHash/' . \implode('/', [
 			$this->sFolder,
+			$this->sAccountHash,
 			$this->Uid,
 			\implode(',', $this->getFlags()),
 //			\implode(',', $this->aThreadUIDs),
@@ -500,8 +503,9 @@ class Message implements \JsonSerializable
 		$result = array(
 			'@Object' => 'Object/Message',
 			'folder' => $this->sFolder,
+			'accountHash' => $this->sAccountHash,
 			'uid' => $this->Uid,
-			'hash' => \md5($this->sFolder . $this->Uid),
+			'hash' => \md5($this->sAccountHash . '|' . $this->sFolder . '|' . $this->Uid),
 			'subject' => \trim(Utils::Utf8Clear($this->sSubject)),
 			'encrypted' => 'multipart/encrypted' == $this->sContentType || $this->pgpEncrypted || $this->smimeEncrypted,
 			'messageId' => $this->sMessageId,

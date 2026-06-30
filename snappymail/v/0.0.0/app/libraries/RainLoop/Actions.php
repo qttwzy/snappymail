@@ -920,6 +920,8 @@ class Actions
 		if ($oAccount && !$this->ImapClient()->IsLoggined()) {
 			try {
 				$oAccount->ImapConnectAndLogin($this->oPlugins, $this->ImapClient(), $this->oConfig);
+				$this->ImapClient()->Settings->accountHash = $oAccount->Hash();
+				$this->MailClient()->ImapClient()->Settings->accountHash = $oAccount->Hash();
 			} catch (\MailSo\Net\Exceptions\ConnectionException $oException) {
 				throw new Exceptions\ClientException(Notifications::ConnectionError, $oException);
 			} catch (\Throwable $oException) {

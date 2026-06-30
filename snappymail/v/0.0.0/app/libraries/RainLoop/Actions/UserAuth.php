@@ -449,6 +449,8 @@ trait UserAuth
 				$oImapClient = $this->ImapClient();
 			}
 			$oAccount->ImapConnectAndLogin($this->Plugins(), $oImapClient, $this->Config());
+			$oImapClient->Settings->accountHash = $oAccount->Hash();
+			$this->MailClient()->ImapClient()->Settings->accountHash = $oAccount->Hash();
 		} catch (ClientException $oException) {
 			throw $oException;
 		} catch (\MailSo\Net\Exceptions\ConnectionException $oException) {
@@ -466,6 +468,31 @@ trait UserAuth
 		} catch (\Throwable $oException) {
 			throw new ClientException(Notifications::AuthError, $oException);
 		}
+	}
+
+	public function getAccountByHash(string $sAccountHash) : ?Account
+	{
+		$oMainAccount = $this->getMainAccountFromToken(false);
+		if (!$oMainAccount || !$sAccountHash) {
+			return null;
+		}
+
+		if ($oMainAccount->Hash() === $sAccountHash) {
+			return $oMainAccount;
+		}
+
+		if (!$this->GetCapa(Capa::ADDITIONAL_ACCOUNTS)) {
+			return null;
+		}
+
+		foreach ($this->GetAccounts($oMainAccount) as $aAccount) {
+			$oAccount = AdditionalAccount::NewInstanceFromTokenArray($this, $aAccount, false);
+			if ($oAccount && $oAccount->Hash() === $sAccountHash) {
+				return $oAccount;
+			}
+		}
+
+		return null;
 	}
 
 }

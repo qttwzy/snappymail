@@ -40,6 +40,7 @@ class ConnectSettings implements \JsonSerializable
 	public bool $shortLogin = false;
 	public bool $lowerLogin = true;
 	public string $stripLogin = '';
+	public string $accountHash = '';
 	public array $SASLMechanisms = [
 		// https://github.com/the-djmaze/snappymail/issues/182
 		'SCRAM-SHA3-512',
