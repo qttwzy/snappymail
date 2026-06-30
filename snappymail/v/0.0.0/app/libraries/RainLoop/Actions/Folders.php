@@ -352,14 +352,19 @@ trait Folders
 	 */
 	public function DoFolderInformation() : array
 	{
-		$this->initMailClientConnection();
+		$sFolder = $this->GetActionParam('folder', '');
+		$oAccount = 'AllUnread' === $sFolder
+			? $this->getAccountFromToken()
+			: $this->initMailClientConnection();
 
 		try
 		{
+			'AllUnread' === $sFolder && $this->MailClient()->SetAllUnreadListCacheTtl($this->allUnreadListCacheTtlSeconds($oAccount));
 			return $this->DefaultResponse($this->MailClient()->FolderInformation(
-				$this->GetActionParam('folder', ''),
+				$sFolder,
 				(int) $this->GetActionParam('uidNext', 0),
-				new \MailSo\Imap\SequenceSet($this->GetActionParam('flagsUids', []))
+				new \MailSo\Imap\SequenceSet($this->GetActionParam('flagsUids', [])),
+				$this->Cacher($oAccount)
 			));
 		}
 		catch (\Throwable $oException)
@@ -377,13 +382,15 @@ trait Folders
 
 		$aFolders = $this->GetActionParam('folders', null);
 		if (\is_array($aFolders)) {
-			$this->initMailClientConnection();
-
 			$aFolders = \array_unique($aFolders);
+			$oAccount = 1 === \count($aFolders) && 'AllUnread' === \reset($aFolders)
+				? $this->getAccountFromToken()
+				: $this->initMailClientConnection();
 			foreach ($aFolders as $sFolder) {
 				try
 				{
-					$aResult[] = $this->MailClient()->FolderInformation($sFolder);
+					'AllUnread' === $sFolder && $this->MailClient()->SetAllUnreadListCacheTtl($this->allUnreadListCacheTtlSeconds($oAccount));
+					$aResult[] = $this->MailClient()->FolderInformation($sFolder, 0, null, $this->Cacher($oAccount));
 				}
 				catch (\Throwable $oException)
 				{

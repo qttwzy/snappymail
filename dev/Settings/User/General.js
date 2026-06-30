@@ -207,10 +207,6 @@ export class UserSettingsGeneral extends AbstractViewSettings {
 
 			checkMailInterval: () => {
 				setRefreshFoldersInterval(SettingsUserStore.checkMailInterval());
-			},
-
-			allUnreadPrefetchInterval: () => {
-				rl.app.restartAllUnreadPrefetchInterval();
 			}
 		});
 	}

@@ -26,7 +26,8 @@ class MessageListParams
 		$bUseSort = true,
 		$bUseThreads = false,
 		$bHideDeleted = true,
-		$bSearchFuzzy = false;
+		$bSearchFuzzy = false,
+		$bForceAllUnreadCacheRefresh = false;
 
 	protected int
 		$iOffset = 0,

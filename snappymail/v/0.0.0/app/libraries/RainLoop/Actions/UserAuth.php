@@ -179,6 +179,7 @@ trait UserAuth
 
 			$this->SetAuthToken($oAccount);
 			$this->SetAdditionalAuthToken(null);
+			$this->RegisterAllUnreadPrewarmAccount($oAccount);
 		}
 
 		return $oAccount;

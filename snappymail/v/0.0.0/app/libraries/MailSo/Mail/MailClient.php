@@ -34,7 +34,11 @@ class MailClient
 
 	private const DEFAULT_MESSAGE_CACHE_TTL = 604800;
 
+	private const ALL_UNREAD_LIST_CACHE_KEY = 'AllUnread/List';
+
 	private int $iMessageCacheTtl = self::DEFAULT_MESSAGE_CACHE_TTL;
+
+	private int $iAllUnreadListCacheTtl = 0;
 
 	function __construct()
 	{
@@ -49,6 +53,12 @@ class MailClient
 	public function SetMessageCacheTtl(int $iSeconds) : self
 	{
 		$this->iMessageCacheTtl = \max(1, $iSeconds);
+		return $this;
+	}
+
+	public function SetAllUnreadListCacheTtl(int $iSeconds) : self
+	{
+		$this->iAllUnreadListCacheTtl = \max(0, $iSeconds);
 		return $this;
 	}
 
@@ -120,8 +130,8 @@ class MailClient
 
 	private function getAllUnreadAccounts() : array
 	{
-		$oCurrentAccount = \RainLoop\Api::Actions()->getAccountFromToken();
-		$oMainAccount = \RainLoop\Api::Actions()->getMainAccountFromToken();
+		$oCurrentAccount = \RainLoop\Api::Actions()->getAccountFromToken(false);
+		$oMainAccount = \RainLoop\Api::Actions()->getMainAccountFromToken(false);
 		$aAccounts = [];
 		if ($oMainAccount) {
 			$aAccounts[] = $oMainAccount;
@@ -160,6 +170,90 @@ class MailClient
 		return $oInfo;
 	}
 
+	private function buildAllUnreadMessageCollection(MessageListParams $oParams, array $aRows) : MessageCollection
+	{
+		if ($oParams->sSearch) {
+			$aRows = \array_values(\array_filter($aRows, function(Message $oMessage) use ($oParams) {
+				$sNeedle = \mb_strtolower($oParams->sSearch);
+				return \str_contains(\mb_strtolower($oMessage->Subject()), $sNeedle)
+					|| ($oMessage->From() && \str_contains(\mb_strtolower($oMessage->From()->ToString()), $sNeedle));
+			}));
+		}
+
+		\usort($aRows, static function(Message $a, Message $b) {
+			return ($b->dateTimestamp ?? 0) <=> ($a->dateTimestamp ?? 0);
+		});
+
+		$oMessageCollection = new MessageCollection;
+		$oMessageCollection->FolderName = $oParams->sFolderName;
+		$oMessageCollection->Offset = $oParams->iOffset;
+		$oMessageCollection->Limit = $oParams->iLimit;
+		$oMessageCollection->Search = $oParams->sSearch;
+		$oMessageCollection->ThreadUid = 0;
+		$oMessageCollection->totalEmails = \count($aRows);
+		$oMessageCollection->FolderInfo = $this->getAllUnreadFolderInfo($oMessageCollection->totalEmails);
+		$oMessageCollection->exchangeArray($oParams->iLimit
+			? \array_slice($aRows, $oParams->iOffset, $oParams->iLimit)
+			: $aRows
+		);
+
+		return $oMessageCollection;
+	}
+
+	private function getCachedAllUnreadMessageCollection(MessageListParams $oParams) : ?MessageCollection
+	{
+		$oCacher = $oParams->oCacher;
+		if (!$oCacher || !$oCacher->IsInited() || 1 > $this->iAllUnreadListCacheTtl) {
+			return null;
+		}
+
+		$sSerialized = $oCacher->Get(self::ALL_UNREAD_LIST_CACHE_KEY);
+		if (!\is_string($sSerialized) || '' === $sSerialized) {
+			return null;
+		}
+
+		$aCached = \json_decode($sSerialized, true);
+		if (!\is_array($aCached) || empty($aCached['cachedAt']) || empty($aCached['payload'])) {
+			$oCacher->Delete(self::ALL_UNREAD_LIST_CACHE_KEY);
+			return null;
+		}
+
+		if ($this->iAllUnreadListCacheTtl < \time() - (int) $aCached['cachedAt']) {
+			$oCacher->Delete(self::ALL_UNREAD_LIST_CACHE_KEY);
+			return null;
+		}
+
+		$oMessageCollection = @\unserialize($aCached['payload'], ['allowed_classes' => true]);
+		if ($oMessageCollection instanceof MessageCollection) {
+			return $this->buildAllUnreadMessageCollection($oParams, $oMessageCollection->getArrayCopy());
+		}
+
+		$oCacher->Delete(self::ALL_UNREAD_LIST_CACHE_KEY);
+		return null;
+	}
+
+	private function cacheAllUnreadMessageCollection(?\MailSo\Cache\CacheClient $oCacher, MessageCollection $oMessageCollection) : void
+	{
+		if (!$oCacher || !$oCacher->IsInited()) {
+			return;
+		}
+
+		$oCacher->Set(
+			self::ALL_UNREAD_LIST_CACHE_KEY,
+			\json_encode([
+				'cachedAt' => \time(),
+				'payload' => \serialize($oMessageCollection)
+			])
+		);
+	}
+
+	public function ClearAllUnreadListCache(?\MailSo\Cache\CacheClient $oCacher) : void
+	{
+		if ($oCacher && $oCacher->IsInited()) {
+			$oCacher->Delete(self::ALL_UNREAD_LIST_CACHE_KEY);
+		}
+	}
+
 	private function getAllUnreadCount() : int
 	{
 		$iUnread = 0;
@@ -182,7 +276,12 @@ class MailClient
 
 	private function getMessageCacheKey(string $sFolderName, int $iIndex, bool $bIndexIsUid, ?string $sFolderHash = null, string $sAccountHash = '') : string
 	{
-		return 'Message/' . ($sAccountHash ?: '0') . '/' . ($sFolderHash ?: $this->FolderHash($sFolderName)) . '/' . ($bIndexIsUid ? 'U' : 'I') . '/' . $iIndex;
+		return 'Message/' . ($sAccountHash ?: '0') . '/' . ($sFolderHash ?: $this->messageFolderCacheHash($sFolderName)) . '/' . ($bIndexIsUid ? 'U' : 'I') . '/' . $iIndex;
+	}
+
+	private function messageFolderCacheHash(string $sFolderName) : string
+	{
+		return 'F' . \sha1($sFolderName);
 	}
 
 	private function getCachedMessage(string $sFolderName, int $iIndex, bool $bIndexIsUid, ?\MailSo\Cache\CacheClient $oCacher, ?string $sFolderHash = null, string $sAccountHash = '', bool $bTouchCachedMessage = false) : ?Message
@@ -239,17 +338,31 @@ class MailClient
 		);
 	}
 
+	public function CachedMessage(string $sFolderName, int $iIndex, bool $bIndexIsUid = true, ?\MailSo\Cache\CacheClient $oCacher = null, string $sAccountHash = '', bool $bTouchCachedMessage = false) : ?Message
+	{
+		if (1 > $iIndex) {
+			throw new \ValueError;
+		}
+
+		$sAccountHash = $sAccountHash ?: (string) ($this->oImapClient->Settings->accountHash ?? '');
+		return $this->getCachedMessage(
+			$sFolderName,
+			$iIndex,
+			$bIndexIsUid,
+			$oCacher,
+			$this->messageFolderCacheHash($sFolderName),
+			$sAccountHash,
+			$bTouchCachedMessage
+		);
+	}
+
 	private function MessageListAllUnread(MessageListParams $oParams) : MessageCollection
 	{
-		$oMessageCollection = new MessageCollection;
-		$oMessageCollection->FolderName = $oParams->sFolderName;
-		$oMessageCollection->Offset = $oParams->iOffset;
-		$oMessageCollection->Limit = $oParams->iLimit;
-		$oMessageCollection->Search = $oParams->sSearch;
-		$oMessageCollection->ThreadUid = 0;
-
-		$oInfo = $this->getAllUnreadFolderInfo();
-		$oMessageCollection->FolderInfo = $oInfo;
+		if (!$oParams->bForceAllUnreadCacheRefresh) {
+			if ($oMessageCollection = $this->getCachedAllUnreadMessageCollection($oParams)) {
+				return $oMessageCollection;
+			}
+		}
 
 		$aRows = [];
 		foreach ($this->getAllUnreadAccounts() as $oAccount) {
@@ -307,28 +420,14 @@ class MailClient
 			}
 		}
 
-		if ($oParams->sSearch) {
-			$aRows = \array_values(\array_filter($aRows, function(Message $oMessage) use ($oParams) {
-				$sNeedle = \mb_strtolower($oParams->sSearch);
-				return \str_contains(\mb_strtolower($oMessage->Subject()), $sNeedle)
-					|| ($oMessage->From() && \str_contains(\mb_strtolower($oMessage->From()->ToString()), $sNeedle));
-			}));
-		}
+		$oFullParams = clone $oParams;
+		$oFullParams->sSearch = '';
+		$oFullParams->iOffset = 0;
+		$oFullParams->iLimit = 0;
+		$oFullMessageCollection = $this->buildAllUnreadMessageCollection($oFullParams, $aRows);
+		$this->cacheAllUnreadMessageCollection($oParams->oCacher, $oFullMessageCollection);
 
-		\usort($aRows, static function(Message $a, Message $b) {
-			return ($b->dateTimestamp ?? 0) <=> ($a->dateTimestamp ?? 0);
-		});
-
-		$oMessageCollection->totalEmails = \count($aRows);
-		$oInfo->MESSAGES = $oMessageCollection->totalEmails;
-		$oInfo->UNSEEN = $oMessageCollection->totalEmails;
-		$oInfo->etag = \md5('AllUnread/' . $oMessageCollection->totalEmails);
-		$oMessageCollection->exchangeArray($oParams->iLimit
-			? \array_slice($aRows, $oParams->iOffset, $oParams->iLimit)
-			: $aRows
-		);
-
-		return $oMessageCollection;
+		return $this->buildAllUnreadMessageCollection($oParams, $oFullMessageCollection->getArrayCopy());
 	}
 
 	/**
@@ -365,7 +464,7 @@ class MailClient
 			$sAccountHash = $sAccountHash ?: (string) ($this->oImapClient->Settings->accountHash ?? '');
 			$sFolderHash = null;
 			if ($oCacher && $oCacher->IsInited()) {
-				$sFolderHash = $this->FolderHash($sFolderName);
+				$sFolderHash = $this->messageFolderCacheHash($sFolderName);
 				if ($sCachedMessage = $this->getCachedMessage($sFolderName, $iIndex, $bIndexIsUid, $oCacher, $sFolderHash, $sAccountHash, $bTouchCachedMessage)) {
 					return $sCachedMessage;
 				}
@@ -588,10 +687,16 @@ class MailClient
 	 * @throws \MailSo\Net\Exceptions\*
 	 * @throws \MailSo\Imap\Exceptions\*
 	 */
-	public function FolderInformation(string $sFolderName, int $iPrevUidNext = 0, ?SequenceSet $oRange = null) : array
+	public function FolderInformation(string $sFolderName, int $iPrevUidNext = 0, ?SequenceSet $oRange = null, ?\MailSo\Cache\CacheClient $oCacher = null) : array
 	{
 		if ('AllUnread' === $sFolderName) {
-			$aInfo = $this->getAllUnreadFolderInfo($this->getAllUnreadCount())->jsonSerialize();
+			$oParams = new MessageListParams;
+			$oParams->sFolderName = 'AllUnread';
+			$oParams->oCacher = $oCacher;
+			$oMessageCollection = $this->getCachedAllUnreadMessageCollection($oParams);
+			$aInfo = $oMessageCollection
+				? $oMessageCollection->FolderInfo->jsonSerialize()
+				: $this->getAllUnreadFolderInfo($this->getAllUnreadCount())->jsonSerialize();
 			if ($iPrevUidNext) {
 				$aInfo['newMessages'] = array();
 			}

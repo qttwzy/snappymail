@@ -29,6 +29,179 @@ trait Messages
 		return $this->messageCacheTtlDays($oAccount) * 86400;
 	}
 
+	private function allUnreadPrefetchInterval(Account $oAccount) : int
+	{
+		$oSettings = $this->SettingsProvider()->Load($oAccount);
+		$iSeconds = $oSettings instanceof \RainLoop\Settings
+			? (int) $oSettings->GetConf('AllUnreadPrefetchInterval', 60)
+			: 60;
+
+		return 0 === $iSeconds ? 0 : \max(15, \min(3600, $iSeconds));
+	}
+
+	private function allUnreadListCacheTtlSeconds(Account $oAccount) : int
+	{
+		$iInterval = $this->allUnreadPrefetchInterval($oAccount);
+		return $iInterval ? \max(60, $iInterval * 2) : 0;
+	}
+
+	public function ClearAllUnreadCacheForAccount(Account $oAccount) : void
+	{
+		$this->MailClient()->ClearAllUnreadListCache($this->Cacher($oAccount));
+	}
+
+	public function RegisterAllUnreadPrewarmAccount(\RainLoop\Model\MainAccount $oAccount) : void
+	{
+		$aRegistry = \json_decode($this->StorageProvider()->Get(null,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::NOBODY,
+			'AllUnreadPrewarm/Accounts',
+			'[]'
+		), true);
+		if (!\is_array($aRegistry)) {
+			$aRegistry = [];
+		}
+
+		$aRegistry[$oAccount->Email()] = [
+			'email' => $oAccount->Email(),
+			'token' => \SnappyMail\Crypt::EncryptToJSON($oAccount->jsonSerialize(), 'all-unread-prewarm'),
+			'registeredAt' => \time()
+		];
+
+		$this->StorageProvider()->Put(null,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::NOBODY,
+			'AllUnreadPrewarm/Accounts',
+			\json_encode($aRegistry)
+		);
+	}
+
+	public function AllUnreadPrewarmRegistry() : array
+	{
+		$aRegistry = \json_decode($this->StorageProvider()->Get(null,
+			\RainLoop\Providers\Storage\Enumerations\StorageType::NOBODY,
+			'AllUnreadPrewarm/Accounts',
+			'[]'
+		), true);
+
+		return \is_array($aRegistry) ? $aRegistry : [];
+	}
+
+	public function AllUnreadPrewarmCycle(bool $bForce = false) : array
+	{
+		$aResults = [];
+		foreach ($this->AllUnreadPrewarmRegistry() as $aEntry) {
+			$sEmail = (string) ($aEntry['email'] ?? '');
+			if (!$sEmail || empty($aEntry['token'])) {
+				continue;
+			}
+
+			try
+			{
+				$aToken = \SnappyMail\Crypt::DecryptFromJSON((string) $aEntry['token'], 'all-unread-prewarm');
+				if (!\is_array($aToken)) {
+					throw new \RuntimeException('Unable to decrypt prewarm token');
+				}
+				$oAccount = \RainLoop\Model\MainAccount::NewInstanceFromTokenArray($this, $aToken, true);
+				$iInterval = $this->allUnreadPrefetchInterval($oAccount);
+				if (1 > $iInterval) {
+					$aResults[] = [
+						'email' => $sEmail,
+						'skipped' => true,
+						'disabled' => true
+					];
+					continue;
+				}
+
+				$sTimerKey = 'AllUnreadPrewarm/LastRun/' . \sha1($oAccount->Email());
+				$iLastRun = (int) $this->StorageProvider()->Get(null,
+					\RainLoop\Providers\Storage\Enumerations\StorageType::NOBODY,
+					$sTimerKey,
+					'0'
+				);
+
+				if (!$bForce && $iLastRun && $iLastRun + $iInterval > \time()) {
+					$aResults[] = [
+						'email' => $oAccount->Email(),
+						'skipped' => true,
+						'intervalSeconds' => $iInterval,
+						'nextRunIn' => \max(0, $iLastRun + $iInterval - \time())
+					];
+					continue;
+				}
+
+				$aResult = $this->AllUnreadPrefetchForAccount($oAccount, true);
+				$this->StorageProvider()->Put(null,
+					\RainLoop\Providers\Storage\Enumerations\StorageType::NOBODY,
+					$sTimerKey,
+					(string) \time()
+				);
+				$aResults[] = $aResult;
+			}
+			catch (\Throwable $oException)
+			{
+				$aResults[] = [
+					'email' => $sEmail,
+					'error' => $oException->getMessage()
+				];
+				\SnappyMail\Log::warning('AllUnreadPrewarm', $sEmail . ' ' . $oException->getMessage());
+			}
+		}
+
+		return [
+			'accounts' => $aResults,
+			'registered' => \count($this->AllUnreadPrewarmRegistry()),
+			'ranAt' => \time()
+		];
+	}
+
+	public function AllUnreadPrefetchForAccount(\RainLoop\Model\MainAccount $oAccount, bool $bForce = true) : array
+	{
+		$this->SetMainAuthAccount($oAccount);
+		if ($this->ImapClient()->IsLoggined()) {
+			$this->ImapClient()->Disconnect();
+		}
+		$this->imapConnect($oAccount);
+		if (!$this->Config()->Get('cache', 'enable', true)) {
+			return [
+				'email' => $oAccount->Email(),
+				'prefetched' => 0,
+				'totalEmails' => 0,
+				'ttlDays' => $this->messageCacheTtlDays($oAccount),
+				'intervalSeconds' => $this->allUnreadPrefetchInterval($oAccount),
+				'disabled' => true
+			];
+		}
+
+		$oParams = new \MailSo\Mail\MessageListParams;
+		$oParams->sFolderName = 'AllUnread';
+		$oParams->iOffset = 0;
+		$oParams->iLimit = 0;
+		$oParams->sSearch = '';
+		$oParams->sSort = '';
+		$oParams->bUseSort = false;
+		$oParams->bUseThreads = false;
+		$oParams->bForceAllUnreadCacheRefresh = $bForce;
+		$oParams->oCacher = $this->Cacher($oAccount);
+
+		$oSettingsLocal = $this->SettingsProvider(true)->Load($oAccount);
+		if ($oSettingsLocal instanceof \RainLoop\Settings) {
+			$oParams->bHideDeleted = !empty($oSettingsLocal->GetConf('HideDeleted', 1));
+		}
+
+		$iTtlDays = $this->messageCacheTtlDays($oAccount);
+		$iInterval = $this->allUnreadPrefetchInterval($oAccount);
+		$this->MailClient()->SetMessageCacheTtl($iTtlDays * 86400);
+		$this->MailClient()->SetAllUnreadListCacheTtl($this->allUnreadListCacheTtlSeconds($oAccount));
+		$oMessageList = $this->MailClient()->MessageList($oParams);
+
+		return [
+			'email' => $oAccount->Email(),
+			'prefetched' => \count($oMessageList),
+			'totalEmails' => $oMessageList->totalEmails,
+			'ttlDays' => $iTtlDays,
+			'intervalSeconds' => $iInterval
+		];
+	}
+
 	/**
 	 * @throws \MailSo\RuntimeException
 	 */
@@ -79,7 +252,9 @@ trait Messages
 			throw new ClientException(Notifications::CantGetMessageList);
 		}
 
-		$oAccount = $this->initMailClientConnection();
+		$oAccount = 'AllUnread' === $oParams->sFolderName
+			? $this->getAccountFromToken()
+			: $this->initMailClientConnection();
 
 		$oSettingsLocal = $this->SettingsProvider(true)->Load($oAccount);
 		if ($oSettingsLocal instanceof \RainLoop\Settings) {
@@ -102,8 +277,11 @@ trait Messages
 		try
 		{
 			$this->MailClient()->SetMessageCacheTtl($this->messageCacheTtlSeconds($oAccount));
+			$this->MailClient()->SetAllUnreadListCacheTtl($this->allUnreadListCacheTtlSeconds($oAccount));
 
-			if ($this->Config()->Get('cache', 'enable', true) && $this->Config()->Get('cache', 'server_uids', false)) {
+			if ($this->Config()->Get('cache', 'enable', true)
+			 && ('AllUnread' === $oParams->sFolderName || $this->Config()->Get('cache', 'server_uids', false))
+			) {
 				$oParams->oCacher = $this->Cacher($oAccount);
 			}
 
@@ -113,51 +291,6 @@ trait Messages
 				$this->cacheByKey($sHash);
 			}
 			return $this->DefaultResponse($oMessageList);
-		}
-		catch (\Throwable $oException)
-		{
-			throw new ClientException(Notifications::CantGetMessageList, $oException);
-		}
-	}
-
-	public function DoAllUnreadPrefetch() : array
-	{
-		$oAccount = $this->initMailClientConnection();
-		if (!$this->Config()->Get('cache', 'enable', true)) {
-			return $this->DefaultResponse([
-				'prefetched' => 0,
-				'totalEmails' => 0,
-				'ttlDays' => $this->messageCacheTtlDays($oAccount),
-				'disabled' => true
-			]);
-		}
-
-		$oParams = new \MailSo\Mail\MessageListParams;
-		$oParams->sFolderName = 'AllUnread';
-		$oParams->iOffset = 0;
-		$oParams->iLimit = 0;
-		$oParams->sSearch = '';
-		$oParams->sSort = '';
-		$oParams->bUseSort = false;
-		$oParams->bUseThreads = false;
-		$oParams->oCacher = $this->Cacher($oAccount);
-
-		$oSettingsLocal = $this->SettingsProvider(true)->Load($oAccount);
-		if ($oSettingsLocal instanceof \RainLoop\Settings) {
-			$oParams->bHideDeleted = !empty($oSettingsLocal->GetConf('HideDeleted', 1));
-		}
-
-		try
-		{
-			$iTtlDays = $this->messageCacheTtlDays($oAccount);
-			$this->MailClient()->SetMessageCacheTtl($iTtlDays * 86400);
-			$oMessageList = $this->MailClient()->MessageList($oParams);
-
-			return $this->DefaultResponse([
-				'prefetched' => \count($oMessageList),
-				'totalEmails' => $oMessageList->totalEmails,
-				'ttlDays' => $iTtlDays
-			]);
 		}
 		catch (\Throwable $oException)
 		{
@@ -540,20 +673,25 @@ trait Messages
 			$sAccountHash = (string) $this->GetActionParam('accountHash', '');
 		}
 
+		$oAccount = null;
 		if ($sAccountHash) {
 			$oAccount = $this->getAccountByHash($sAccountHash);
 			if (!$oAccount) {
 				throw new ClientException(Notifications::AccountNotAllowed);
 			}
-			$this->imapConnect($oAccount);
 		} else {
-			$oAccount = $this->initMailClientConnection();
+			$oAccount = $this->getAccountFromToken();
 		}
 
 		try
 		{
 			$this->MailClient()->SetMessageCacheTtl($this->messageCacheTtlSeconds($oAccount));
-			$oMessage = $this->MailClient()->Message($sFolder, $iUid, true, $this->Cacher($oAccount), $oAccount->Hash(), true);
+			$this->MailClient()->SetAllUnreadListCacheTtl($this->allUnreadListCacheTtlSeconds($oAccount));
+			$oMessage = $this->MailClient()->CachedMessage($sFolder, $iUid, true, $this->Cacher($oAccount), $oAccount->Hash(), true);
+			if (!$oMessage) {
+				$this->imapConnect($oAccount);
+				$oMessage = $this->MailClient()->Message($sFolder, $iUid, true, $this->Cacher($oAccount), $oAccount->Hash(), true);
+			}
 			if (!$oMessage) {
 				throw new \RuntimeException('Message not found');
 			}
@@ -669,7 +807,7 @@ trait Messages
 			}
 			$this->imapConnect($oAccount);
 		} else {
-			$this->initMailClientConnection();
+			$oAccount = $this->initMailClientConnection();
 		}
 
 		$sFolder = $this->GetActionParam('folder', '');
@@ -684,9 +822,10 @@ trait Messages
 			throw new ClientException(Notifications::CantDeleteMessage, $oException);
 		}
 
+		$this->ClearAllUnreadCacheForAccount($oAccount);
 		$sHash = $this->MailClient()->FolderHash($sFolder);
 
-		return $this->DefaultResponse($sHash ? array($sFolder, $sHash) : array($sFromFolder));
+		return $this->DefaultResponse($sHash ? array($sFolder, $sHash) : array($sFolder));
 	}
 
 	/**
@@ -702,7 +841,7 @@ trait Messages
 			}
 			$this->imapConnect($oAccount);
 		} else {
-			$this->initMailClientConnection();
+			$oAccount = $this->initMailClientConnection();
 		}
 
 		$sFromFolder = $this->GetActionParam('fromFolder', '');
@@ -750,6 +889,7 @@ trait Messages
 			throw new ClientException(Notifications::CantMoveMessage, $oException);
 		}
 
+		$this->ClearAllUnreadCacheForAccount($oAccount);
 		$sHash = $this->MailClient()->FolderHash($sFromFolder);
 
 		return $this->DefaultResponse($sHash ? array($sFromFolder, $sHash) : array($sFromFolder));
@@ -768,7 +908,7 @@ trait Messages
 			}
 			$this->imapConnect($oAccount);
 		} else {
-			$this->initMailClientConnection();
+			$oAccount = $this->initMailClientConnection();
 		}
 
 		$sToFolder = $this->GetActionParam('toFolder', '');
@@ -990,7 +1130,7 @@ trait Messages
 			}
 			$this->imapConnect($oAccount);
 		} else {
-			$this->initMailClientConnection();
+			$oAccount = $this->initMailClientConnection();
 		}
 
 		try
@@ -1008,6 +1148,7 @@ trait Messages
 			throw new ClientException(Notifications::MailServerError, $oException);
 		}
 
+		$this->ClearAllUnreadCacheForAccount($oAccount);
 		return $this->TrueResponse();
 	}
 
