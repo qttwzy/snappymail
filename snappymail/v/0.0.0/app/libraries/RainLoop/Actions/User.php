@@ -196,6 +196,12 @@ trait User
 		$this->setSettingsFromParams($oSettings, 'messageNewWindow', 'bool');
 		$this->setSettingsFromParams($oSettings, 'messageReadAuto', 'bool');
 		$this->setSettingsFromParams($oSettings, 'MessageReadDelay', 'int');
+		$this->setSettingsFromParams($oSettings, 'AllUnreadPrefetchInterval', 'int', function ($iValue) {
+			return 0 === $iValue ? 0 : \min(3600, \max(15, $iValue));
+		});
+		$this->setSettingsFromParams($oSettings, 'MessageCacheTtlDays', 'int', function ($iValue) {
+			return \min(30, \max(1, $iValue));
+		});
 		$this->setSettingsFromParams($oSettings, 'MsgDefaultAction', 'int');
 		$this->setSettingsFromParams($oSettings, 'showNextMessage', 'bool');
 		$this->setSettingsFromParams($oSettings, 'markdown', 'bool');
@@ -287,7 +293,7 @@ trait User
 				case 'int':
 					$iValue = (int) $sValue;
 					if ($cCallback) {
-						$sValue = $cCallback($iValue);
+						$iValue = (int) $cCallback($iValue);
 					}
 					$oSettings->SetConf($sConfigName, $iValue);
 					break;

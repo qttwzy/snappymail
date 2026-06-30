@@ -13,6 +13,22 @@ use MailSo\Mime\Enumerations\Header as MimeEnumHeader;
 
 trait Messages
 {
+	private function messageCacheTtlDays(?Account $oAccount = null) : int
+	{
+		$oSettingsAccount = $this->getMainAccountFromToken(false) ?: $oAccount ?: $this->getAccountFromToken(false);
+		$oSettings = $oSettingsAccount ? $this->SettingsProvider()->Load($oSettingsAccount) : null;
+		$iDays = $oSettings instanceof \RainLoop\Settings
+			? (int) $oSettings->GetConf('MessageCacheTtlDays', 7)
+			: 7;
+
+		return \max(1, \min(30, $iDays));
+	}
+
+	private function messageCacheTtlSeconds(?Account $oAccount = null) : int
+	{
+		return $this->messageCacheTtlDays($oAccount) * 86400;
+	}
+
 	/**
 	 * @throws \MailSo\RuntimeException
 	 */
@@ -85,6 +101,8 @@ trait Messages
 
 		try
 		{
+			$this->MailClient()->SetMessageCacheTtl($this->messageCacheTtlSeconds($oAccount));
+
 			if ($this->Config()->Get('cache', 'enable', true) && $this->Config()->Get('cache', 'server_uids', false)) {
 				$oParams->oCacher = $this->Cacher($oAccount);
 			}
@@ -95,6 +113,51 @@ trait Messages
 				$this->cacheByKey($sHash);
 			}
 			return $this->DefaultResponse($oMessageList);
+		}
+		catch (\Throwable $oException)
+		{
+			throw new ClientException(Notifications::CantGetMessageList, $oException);
+		}
+	}
+
+	public function DoAllUnreadPrefetch() : array
+	{
+		$oAccount = $this->initMailClientConnection();
+		if (!$this->Config()->Get('cache', 'enable', true)) {
+			return $this->DefaultResponse([
+				'prefetched' => 0,
+				'totalEmails' => 0,
+				'ttlDays' => $this->messageCacheTtlDays($oAccount),
+				'disabled' => true
+			]);
+		}
+
+		$oParams = new \MailSo\Mail\MessageListParams;
+		$oParams->sFolderName = 'AllUnread';
+		$oParams->iOffset = 0;
+		$oParams->iLimit = 0;
+		$oParams->sSearch = '';
+		$oParams->sSort = '';
+		$oParams->bUseSort = false;
+		$oParams->bUseThreads = false;
+		$oParams->oCacher = $this->Cacher($oAccount);
+
+		$oSettingsLocal = $this->SettingsProvider(true)->Load($oAccount);
+		if ($oSettingsLocal instanceof \RainLoop\Settings) {
+			$oParams->bHideDeleted = !empty($oSettingsLocal->GetConf('HideDeleted', 1));
+		}
+
+		try
+		{
+			$iTtlDays = $this->messageCacheTtlDays($oAccount);
+			$this->MailClient()->SetMessageCacheTtl($iTtlDays * 86400);
+			$oMessageList = $this->MailClient()->MessageList($oParams);
+
+			return $this->DefaultResponse([
+				'prefetched' => \count($oMessageList),
+				'totalEmails' => $oMessageList->totalEmails,
+				'ttlDays' => $iTtlDays
+			]);
 		}
 		catch (\Throwable $oException)
 		{
@@ -489,7 +552,8 @@ trait Messages
 
 		try
 		{
-			$oMessage = $this->MailClient()->Message($sFolder, $iUid, true, $this->Cacher($oAccount), $oAccount->Hash());
+			$this->MailClient()->SetMessageCacheTtl($this->messageCacheTtlSeconds($oAccount));
+			$oMessage = $this->MailClient()->Message($sFolder, $iUid, true, $this->Cacher($oAccount), $oAccount->Hash(), true);
 			if (!$oMessage) {
 				throw new \RuntimeException('Message not found');
 			}

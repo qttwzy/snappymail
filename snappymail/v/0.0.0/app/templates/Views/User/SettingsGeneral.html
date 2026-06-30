@@ -45,6 +45,22 @@
 		</div>
 	</div>
 	<div class="control-group">
+		<label data-i18n="SETTINGS_GENERAL/ALL_UNREAD_PREFETCH_INTERVAL"></label>
+		<div>
+			<input type="number" min="0" max="3600" step="1" class="span1" data-bind="textInput: allUnreadPrefetchInterval">
+			<span data-i18n="SETTINGS_GENERAL/SECONDS"></span>
+			<span data-bind="saveTrigger: allUnreadPrefetchIntervalTrigger"></span>
+		</div>
+	</div>
+	<div class="control-group">
+		<label data-i18n="SETTINGS_GENERAL/MESSAGE_CACHE_TTL_DAYS"></label>
+		<div>
+			<input type="number" min="1" max="30" step="1" class="span1" data-bind="textInput: messageCacheTtlDays">
+			<span data-i18n="SETTINGS_GENERAL/DAYS"></span>
+			<span data-bind="saveTrigger: messageCacheTtlDaysTrigger"></span>
+		</div>
+	</div>
+	<div class="control-group">
 		<div>
 			<div data-bind="component: {
 				name: 'Checkbox',

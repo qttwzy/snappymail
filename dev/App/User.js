@@ -1,7 +1,7 @@
 import 'External/User/ko';
 
 import { SMAudio } from 'Common/Audio';
-import { arrayLength } from 'Common/Utils';
+import { arrayLength, pInt } from 'Common/Utils';
 import { mailToHelper, setLayoutResizer, dropdownsDetectVisibility, loadAccountsAndIdentities } from 'Common/UtilsUser';
 
 import {
@@ -62,6 +62,32 @@ import {
 } from 'Common/Folders';
 import { loadFolders } from 'Model/FolderCollection';
 
+let allUnreadPrefetchTimer = 0,
+	allUnreadPrefetchStartTimer = 0,
+	allUnreadPrefetchInFlight = false;
+
+const prefetchAllUnread = () => {
+	if (allUnreadPrefetchInFlight) {
+		return;
+	}
+
+	allUnreadPrefetchInFlight = true;
+	Remote.request('AllUnreadPrefetch', () => {
+		allUnreadPrefetchInFlight = false;
+	});
+};
+
+export const restartAllUnreadPrefetchInterval = () => {
+	clearInterval(allUnreadPrefetchTimer);
+	clearTimeout(allUnreadPrefetchStartTimer);
+
+	const interval = pInt(SettingsUserStore.allUnreadPrefetchInterval());
+	if (0 < interval) {
+		allUnreadPrefetchStartTimer = setTimeout(prefetchAllUnread, 5000);
+		allUnreadPrefetchTimer = setInterval(prefetchAllUnread, Math.max(15, interval) * 1000);
+	}
+};
+
 export class AppUser extends AbstractApp {
 	constructor() {
 		super(Remote);
@@ -90,6 +116,7 @@ export class AppUser extends AbstractApp {
 		this.ask = AskPopupView;
 
 		this.loadAccountsAndIdentities = loadAccountsAndIdentities;
+		this.restartAllUnreadPrefetchInterval = restartAllUnreadPrefetchInterval;
 	}
 
 	/**
@@ -193,6 +220,7 @@ export class AppUser extends AbstractApp {
 						]);
 
 						setRefreshFoldersInterval(SettingsGet('CheckMailInterval'));
+						restartAllUnreadPrefetchInterval();
 
 						loadAccountsAndIdentities();
 

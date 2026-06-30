@@ -32,7 +32,9 @@ class MailClient
 
 	private bool $bThreadSort = false;
 
-	private const MESSAGE_CACHE_TTL = 604800;
+	private const DEFAULT_MESSAGE_CACHE_TTL = 604800;
+
+	private int $iMessageCacheTtl = self::DEFAULT_MESSAGE_CACHE_TTL;
 
 	function __construct()
 	{
@@ -42,6 +44,12 @@ class MailClient
 	public function ImapClient() : \MailSo\Imap\ImapClient
 	{
 		return $this->oImapClient;
+	}
+
+	public function SetMessageCacheTtl(int $iSeconds) : self
+	{
+		$this->iMessageCacheTtl = \max(1, $iSeconds);
+		return $this;
 	}
 
 	private function getEnvelopeOrHeadersRequestString() : string
@@ -172,55 +180,61 @@ class MailClient
 		return $iUnread;
 	}
 
-		private function getMessageCacheKey(string $sFolderName, int $iIndex, bool $bIndexIsUid, ?string $sFolderHash = null, string $sAccountHash = '') : string
-		{
-			return 'Message/' . ($sAccountHash ?: '0') . '/' . ($sFolderHash ?: $this->FolderHash($sFolderName)) . '/' . ($bIndexIsUid ? 'U' : 'I') . '/' . $iIndex;
+	private function getMessageCacheKey(string $sFolderName, int $iIndex, bool $bIndexIsUid, ?string $sFolderHash = null, string $sAccountHash = '') : string
+	{
+		return 'Message/' . ($sAccountHash ?: '0') . '/' . ($sFolderHash ?: $this->FolderHash($sFolderName)) . '/' . ($bIndexIsUid ? 'U' : 'I') . '/' . $iIndex;
+	}
+
+	private function getCachedMessage(string $sFolderName, int $iIndex, bool $bIndexIsUid, ?\MailSo\Cache\CacheClient $oCacher, ?string $sFolderHash = null, string $sAccountHash = '', bool $bTouchCachedMessage = false) : ?Message
+	{
+		if (!$oCacher || !$oCacher->IsInited()) {
+			return null;
 		}
 
-		private function getCachedMessage(string $sFolderName, int $iIndex, bool $bIndexIsUid, ?\MailSo\Cache\CacheClient $oCacher, ?string $sFolderHash = null, string $sAccountHash = '') : ?Message
-		{
-			if (!$oCacher || !$oCacher->IsInited()) {
-				return null;
-			}
-
-			$sSerialized = $oCacher->Get($this->getMessageCacheKey($sFolderName, $iIndex, $bIndexIsUid, $sFolderHash, $sAccountHash));
-			if (!\is_string($sSerialized) || '' === $sSerialized) {
-				return null;
-			}
+		$sCacheKey = $this->getMessageCacheKey($sFolderName, $iIndex, $bIndexIsUid, $sFolderHash, $sAccountHash);
+		$sSerialized = $oCacher->Get($sCacheKey);
+		if (!\is_string($sSerialized) || '' === $sSerialized) {
+			return null;
+		}
 
 		$aCached = \json_decode($sSerialized, true);
 		if (!\is_array($aCached) || empty($aCached['cachedAt']) || empty($aCached['payload'])) {
-			$oCacher->Delete($this->getMessageCacheKey($sFolderName, $iIndex, $bIndexIsUid, $sFolderHash, $sAccountHash));
+			$oCacher->Delete($sCacheKey);
 			return null;
-			}
+		}
 
-			if (self::MESSAGE_CACHE_TTL < \time() - (int) $aCached['cachedAt']) {
-				$oCacher->Delete($this->getMessageCacheKey($sFolderName, $iIndex, $bIndexIsUid, $sFolderHash, $sAccountHash));
-				return null;
-			}
+		if ($this->iMessageCacheTtl < \time() - (int) $aCached['cachedAt']) {
+			$oCacher->Delete($sCacheKey);
+			return null;
+		}
 
 		$oMessage = @\unserialize($aCached['payload'], ['allowed_classes' => true]);
 		if ($oMessage instanceof Message) {
 			if ($sAccountHash && $sAccountHash !== $oMessage->sAccountHash) {
-				$oCacher->Delete($this->getMessageCacheKey($sFolderName, $iIndex, $bIndexIsUid, $sFolderHash, $sAccountHash));
+				$oCacher->Delete($sCacheKey);
 				return null;
+			}
+			if ($bTouchCachedMessage) {
+				$aCached['cachedAt'] = \time();
+				$oCacher->Set($sCacheKey, \json_encode($aCached));
 			}
 			return $oMessage;
 		}
+		$oCacher->Delete($sCacheKey);
 		return null;
 	}
 
-		private function cacheMessage(string $sFolderName, int $iIndex, bool $bIndexIsUid, ?\MailSo\Cache\CacheClient $oCacher, Message $oMessage, ?string $sFolderHash = null, string $sAccountHash = '') : void
-		{
-			if (!$oCacher || !$oCacher->IsInited()) {
-				return;
-			}
+	private function cacheMessage(string $sFolderName, int $iIndex, bool $bIndexIsUid, ?\MailSo\Cache\CacheClient $oCacher, Message $oMessage, ?string $sFolderHash = null, string $sAccountHash = '') : void
+	{
+		if (!$oCacher || !$oCacher->IsInited()) {
+			return;
+		}
 
-			$oCacher->Set(
-				$this->getMessageCacheKey($sFolderName, $iIndex, $bIndexIsUid, $sFolderHash, $sAccountHash),
-				\json_encode([
-					'cachedAt' => \time(),
-					'payload' => \serialize($oMessage)
+		$oCacher->Set(
+			$this->getMessageCacheKey($sFolderName, $iIndex, $bIndexIsUid, $sFolderHash, $sAccountHash),
+			\json_encode([
+				'cachedAt' => \time(),
+				'payload' => \serialize($oMessage)
 			])
 		);
 	}
@@ -246,11 +260,12 @@ class MailClient
 			try
 			{
 				$oAccountMailClient = new self;
-					$oAccountMailClient->SetLogger($this->Logger());
-					$oImapClient = $oAccountMailClient->ImapClient();
-					$oAccount->ImapConnectAndLogin(\RainLoop\Api::Actions()->Plugins(), $oImapClient, \RainLoop\Api::Actions()->Config());
-					$oImapClient->Settings->accountHash = $oAccount->Hash();
-					$oFolders = $oAccountMailClient->Folders('', '*', false);
+				$oAccountMailClient->SetLogger($this->Logger());
+				$oAccountMailClient->SetMessageCacheTtl($this->iMessageCacheTtl);
+				$oImapClient = $oAccountMailClient->ImapClient();
+				$oAccount->ImapConnectAndLogin(\RainLoop\Api::Actions()->Plugins(), $oImapClient, \RainLoop\Api::Actions()->Config());
+				$oImapClient->Settings->accountHash = $oAccount->Hash();
+				$oFolders = $oAccountMailClient->Folders('', '*', false);
 				if (!$oFolders) {
 					continue;
 				}
@@ -279,7 +294,7 @@ class MailClient
 					}
 
 					foreach ($aUnreadUids as $iUid) {
-						$oMessage = $oAccountMailClient->Message($oFolder->FullName, (int) $iUid, true, $oParams->oCacher);
+						$oMessage = $oAccountMailClient->Message($oFolder->FullName, (int) $iUid, true, $oParams->oCacher, $oAccount->Hash(), true);
 						if ($oMessage) {
 							$aRows[] = $oMessage;
 						}
@@ -341,7 +356,7 @@ class MailClient
 	 * @throws \MailSo\Net\Exceptions\*
 	 * @throws \MailSo\Imap\Exceptions\*
 	 */
-		public function Message(string $sFolderName, int $iIndex, bool $bIndexIsUid = true, ?\MailSo\Cache\CacheClient $oCacher = null, string $sAccountHash = '') : ?Message
+		public function Message(string $sFolderName, int $iIndex, bool $bIndexIsUid = true, ?\MailSo\Cache\CacheClient $oCacher = null, string $sAccountHash = '', bool $bTouchCachedMessage = false) : ?Message
 		{
 			if (1 > $iIndex) {
 				throw new \ValueError;
@@ -351,7 +366,7 @@ class MailClient
 			$sFolderHash = null;
 			if ($oCacher && $oCacher->IsInited()) {
 				$sFolderHash = $this->FolderHash($sFolderName);
-				if ($sCachedMessage = $this->getCachedMessage($sFolderName, $iIndex, $bIndexIsUid, $oCacher, $sFolderHash, $sAccountHash)) {
+				if ($sCachedMessage = $this->getCachedMessage($sFolderName, $iIndex, $bIndexIsUid, $oCacher, $sFolderHash, $sAccountHash, $bTouchCachedMessage)) {
 					return $sCachedMessage;
 				}
 			}

@@ -598,6 +598,8 @@ class Actions
 						'markdown' => false,
 						'messageReadAuto' => true, // (bool) $oConfig->Get('webmail', 'message_read_auto', true),
 						'MessageReadDelay' => (int) $oConfig->Get('webmail', 'message_read_delay', 5),
+						'AllUnreadPrefetchInterval' => 60,
+						'MessageCacheTtlDays' => 7,
 						'MsgDefaultAction' => (int) $oConfig->Get('defaults', 'msg_default_action', 1),
 						'SoundNotification' => true,
 						'NotificationSound' => 'new-mail',
@@ -695,6 +697,8 @@ class Actions
 					$aResult['markdown'] = (bool)$oSettings->GetConf('markdown', $aResult['markdown']);
 					$aResult['messageReadAuto'] = (int)$oSettings->GetConf('messageReadAuto', $aResult['messageReadAuto']);
 					$aResult['MessageReadDelay'] = (int)$oSettings->GetConf('MessageReadDelay', $aResult['MessageReadDelay']);
+					$aResult['AllUnreadPrefetchInterval'] = \max(0, \min(3600, (int)$oSettings->GetConf('AllUnreadPrefetchInterval', $aResult['AllUnreadPrefetchInterval'])));
+					$aResult['MessageCacheTtlDays'] = \max(1, \min(30, (int)$oSettings->GetConf('MessageCacheTtlDays', $aResult['MessageCacheTtlDays'])));
 					$aResult['MsgDefaultAction'] = (int)$oSettings->GetConf('MsgDefaultAction', $aResult['MsgDefaultAction']);
 					$aResult['SoundNotification'] = (bool)$oSettings->GetConf('SoundNotification', $aResult['SoundNotification']);
 					$aResult['NotificationSound'] = (string)$oSettings->GetConf('NotificationSound', $aResult['NotificationSound']);

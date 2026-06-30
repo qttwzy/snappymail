@@ -100,6 +100,7 @@ export class UserSettingsGeneral extends AbstractViewSettings {
 		['defaultSort', 'useThreads', 'threadAlgorithm',
 		 // These use addSetting()
 		 'layout', 'messageReadDelay', 'messagesPerPage', 'checkMailInterval',
+		 'allUnreadPrefetchInterval', 'messageCacheTtlDays',
 		 'editorDefaultType', 'editorWysiwyg', 'msgDefaultAction', 'maxBlockquotesLevel',
 		 // These are in addSettings()
 		 'requestReadReceipt', 'requestDsn', 'requireTLS', 'pgpSign', 'pgpEncrypt',
@@ -157,6 +158,8 @@ export class UserSettingsGeneral extends AbstractViewSettings {
 		this.addSetting('editorWysiwyg');
 		this.addSetting('MsgDefaultAction');
 		this.addSetting('MessageReadDelay');
+		this.addSetting('AllUnreadPrefetchInterval');
+		this.addSetting('MessageCacheTtlDays');
 		this.addSetting('MessagesPerPage');
 		this.addSetting('CheckMailInterval');
 		this.addSetting('Layout');
@@ -204,6 +207,10 @@ export class UserSettingsGeneral extends AbstractViewSettings {
 
 			checkMailInterval: () => {
 				setRefreshFoldersInterval(SettingsUserStore.checkMailInterval());
+			},
+
+			allUnreadPrefetchInterval: () => {
+				rl.app.restartAllUnreadPrefetchInterval();
 			}
 		});
 	}
