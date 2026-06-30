@@ -1,6 +1,6 @@
 import { staticLink } from 'Common/Links';
 import { addObservablesTo } from 'External/ko';
-import { fireEvent } from 'Common/Globals';
+import { fireEvent, SettingsGet } from 'Common/Globals';
 
 /**
  * Might not work due to the new ServiceWorkerRegistration.showNotification
@@ -12,6 +12,7 @@ const HTML5Notification = window.Notification,
 	dispatchMessage = data => {
 		focus();
 		if (data.folder && data.uid) {
+			data.accountHash || (data.accountHash = SettingsGet('accountHash'));
 			fireEvent('mailbox.message.show', data);
 		} else if (data.Url) {
 			hasher.setHash(data.Url);

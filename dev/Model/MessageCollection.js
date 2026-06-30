@@ -1,8 +1,16 @@
 import { AbstractCollectionModel } from 'Model/AbstractCollection';
 import { MessageModel } from 'Model/Message';
 import { MessageUserStore } from 'Stores/User/Message';
+import { SettingsGet } from 'Common/Globals';
 
 'use strict';
+
+const
+	messageAccountHash = message => message?.accountHash || SettingsGet('accountHash'),
+	sameMessageIdentity = (a, b) => a && b
+		&& messageAccountHash(a) === messageAccountHash(b)
+		&& a.folder === b.folder
+		&& a.uid == b.uid;
 
 export class MessageCollectionModel extends AbstractCollectionModel
 {
@@ -30,7 +38,7 @@ export class MessageCollectionModel extends AbstractCollectionModel
 		let msg = MessageUserStore.message();
 		return super.reviveFromJson(object, message => {
 			// If message is currently viewed, use that.
-			if (msg && msg.hash === message.hash) {
+			if (sameMessageIdentity(msg, message) && (!msg.hash || !message.hash || msg.hash === message.hash)) {
 				msg.revivePropertiesFromJson(message);
 				message = msg;
 			} else {

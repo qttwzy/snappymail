@@ -6,7 +6,7 @@ import { ScopeFolderList, ScopeMessageList, ScopeMessageView } from 'Common/Enum
 import { ComposeType, FolderType, MessageSetAction } from 'Common/EnumsUser';
 import { doc,
 	leftPanelDisabled, toggleLeftPanel,
-	Settings, SettingsCapa,
+	Settings, SettingsCapa, SettingsGet,
 	addEventsListeners, stopEvent,
 	addShortcut, registerShortcut, formFieldFocused
 } from 'Common/Globals';
@@ -48,6 +48,9 @@ import { setLayoutResizer } from 'Common/UtilsUser';
 
 const
 	canBeMovedHelper = () => MessagelistUserStore.hasCheckedOrSelected(),
+	messageIdentity = message => message
+		? (message.accountHash || SettingsGet('accountHash')) + '/' + message.folder + '/' + message.uid
+		: '',
 
 	/**
 	 * @param {string} sFolderFullName
@@ -250,7 +253,7 @@ export class MailMessageList extends AbstractViewRight {
 
 		this.selector.on('MiddleClick', message => populateMessageBody(message, true));
 
-		this.selector.on('ItemGetUid', message => (message ? message.folder + '/' + message.uid : ''));
+		this.selector.on('ItemGetUid', messageIdentity);
 
 		this.selector.on('canSelect', () => MessagelistUserStore.canSelect());
 
@@ -262,7 +265,9 @@ export class MailMessageList extends AbstractViewRight {
 					listAction(
 						currentMessage.folder,
 						currentMessage.isFlagged() ? MessageSetAction.UnsetFlag : MessageSetAction.SetFlag,
-						checked.find(message => message.uid == currentMessage.uid) ? checked : [currentMessage]
+						checked.find(message => messageIdentity(message) == messageIdentity(currentMessage))
+							? checked
+							: [currentMessage]
 					);
 				}
 			} else if (el.closest('.threads-len')) {
@@ -298,10 +303,13 @@ export class MailMessageList extends AbstractViewRight {
 
 		addEventListener('mailbox.message.show', e => {
 			const sFolder = e.detail.folder, iUid = e.detail.uid;
+				const accountHash = e.detail.accountHash || SettingsGet('accountHash');
 
-			const message = MessagelistUserStore.find(
-				item => sFolder === item?.folder && iUid == item?.uid
-			);
+				const message = MessagelistUserStore.find(
+					item => sFolder === item?.folder
+						&& iUid == item?.uid
+						&& accountHash === (item?.accountHash || SettingsGet('accountHash'))
+				);
 
 			if ('INBOX' === sFolder) {
 				hasher.setHash(mailBox(sFolder));
@@ -317,6 +325,7 @@ export class MailMessageList extends AbstractViewRight {
 					let message = new MessageModel;
 					message.folder = sFolder;
 					message.uid = iUid;
+					message.accountHash = accountHash;
 					setMessage(message);
 				} else {
 					MessageUserStore.message(null);

@@ -120,6 +120,7 @@ export class MessageModel extends AbstractModel {
 		Object.assign(this, {
 			folder: '',
 			uid: 0,
+			accountHash: '',
 			hash: '',
 			from: new EmailCollectionModel,
 			to: new EmailCollectionModel,
@@ -258,12 +259,13 @@ export class MessageModel extends AbstractModel {
 	}
 
 	get requestHash() {
+		const accountHash = this.accountHash || SettingsGet('accountHash');
 		return b64EncodeJSONSafe({
 			folder: this.folder,
 			uid: this.uid,
 			mimeType: RFC822,
 			fileName: (this.subject() || 'message') + '-' + this.hash + '.eml',
-			accountHash: SettingsGet('accountHash')
+			accountHash
 		});
 	}
 

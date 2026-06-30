@@ -31,6 +31,7 @@ export class AttachmentModel extends AbstractModel {
 		this.url = '';
 		this.mimeIndex = '';
 		this.estimatedSize = 0;
+		this.accountHash = '';
 
 		addObservablesTo(this, {
 			isInline: false,
@@ -126,6 +127,7 @@ export class AttachmentModel extends AbstractModel {
 	}
 
 	get download() {
+		const accountHash = this.accountHash || SettingsGet('accountHash');
 		return b64EncodeJSONSafe(this.url ? {
 			fileName: this.fileName,
 			data: this.url.replace(/^.+,/, '')
@@ -135,7 +137,7 @@ export class AttachmentModel extends AbstractModel {
 			mimeIndex: this.mimeIndex,
 			mimeType: this.mimeType,
 			fileName: this.fileName,
-			accountHash: SettingsGet('accountHash')
+			accountHash
 		});
 	}
 

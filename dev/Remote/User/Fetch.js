@@ -20,9 +20,10 @@ class RemoteUserFetch extends AbstractFetchRemote {
 	 * @param {number} iUid
 	 * @returns {boolean}
 	 */
-	message(fCallback, sFolderFullName, iUid) {
+	message(fCallback, sFolderFullName, iUid, accountHash) {
 		sFolderFullName = pString(sFolderFullName);
 		iUid = pInt(iUid);
+		accountHash = pString(accountHash);
 
 		if (getFolderFromCacheList(sFolderFullName) && 0 < iUid) {
 			this.abort('Message').request('Message',
@@ -36,7 +37,8 @@ class RemoteUserFetch extends AbstractFetchRemote {
 						sFolderFullName,
 						iUid,
 						AppUserStore.threadsAllowed() && SettingsUserStore.useThreads() ? 1 : 0,
-						SettingsGet('accountHash')
+						accountHash || SettingsGet('accountHash'),
+						1
 					])
 			);
 

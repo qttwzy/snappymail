@@ -37,6 +37,18 @@ import { baseCollator } from 'Common/Translator';
 const
 	isChecked = item => item.checked(),
 	isDeleted = item => item.isDeleted(),
+	messageUidsWithThreads = message => {
+		const uids = [message.uid];
+		if (1 < message.threadsLen()) {
+			message.threads().forEach(uid => uids.push(uid));
+		}
+		return uids.validUnique();
+	},
+	groupUidsWithThreads = group => {
+		const uids = [];
+		group.forEach(message => uids.push(...messageUidsWithThreads(message)));
+		return uids.validUnique().join(',');
+	},
 	replaceHash = hash => {
 		rl.route.off();
 		hasher.replaceHash(hash);
@@ -114,8 +126,10 @@ addComputablesTo(MessagelistUserStore, {
 
 	listCheckedOrSelectedUidsWithSubMails: () => {
 		let result = new Set;
+		result.messages = [];
 		MessagelistUserStore.listCheckedOrSelected().forEach(message => {
 			result.add(message.uid);
+			result.messages.push(message);
 			result.folder = message.folder;
 			if (1 < message.threadsLen()) {
 				message.threads().forEach(result.add, result);
@@ -289,7 +303,7 @@ MessagelistUserStore.reload = (bDropPagePosition = false, bDropCurrentFolderCach
 					);
 					MessagelistUserStore.endThreadUid(collection.threadUid);
 					const message = MessageUserStore.message();
-					if (message && folderInfo.name !== message.folder) {
+					if (message && 'AllUnread' !== folderInfo.name && folderInfo.name !== message.folder) {
 						MessageUserStore.message(null);
 					}
 
@@ -348,12 +362,12 @@ MessagelistUserStore.setAction = (sFolderFullName, iSetAction, messages) => {
 	messages = messages || MessagelistUserStore.listChecked();
 
 	let folder,
-		rootUids = [],
+		affectedMessages = [],
 		length;
 
 	if (iSetAction == MessageSetAction.SetSeen) {
 		messages.forEach(oMessage => {
-			if (oMessage.isUnseen() && rootUids.push(oMessage.uid)) {
+			if (oMessage.isUnseen() && affectedMessages.push(oMessage)) {
 				oMessage.flags.push('\\seen');
 				if (oMessage.threads().length > 0 && oMessage.threadUnseen().includes(oMessage.uid)) {
 					oMessage.threadUnseen.remove(oMessage.uid);
@@ -362,7 +376,7 @@ MessagelistUserStore.setAction = (sFolderFullName, iSetAction, messages) => {
 		});
 	} else if (iSetAction == MessageSetAction.UnsetSeen) {
 		messages.forEach(oMessage => {
-			if (!oMessage.isUnseen() && rootUids.push(oMessage.uid)) {
+			if (!oMessage.isUnseen() && affectedMessages.push(oMessage)) {
 				oMessage.flags.remove('\\seen');
 				if (oMessage.threads().length > 0 && !oMessage.threadUnseen().includes(oMessage.uid)) {
 					oMessage.threadUnseen.push(oMessage.uid);
@@ -371,25 +385,33 @@ MessagelistUserStore.setAction = (sFolderFullName, iSetAction, messages) => {
 		});
 	} else if (iSetAction == MessageSetAction.SetFlag) {
 		messages.forEach(oMessage =>
-			!oMessage.isFlagged() && rootUids.push(oMessage.uid) && oMessage.flags.push('\\flagged')
+			!oMessage.isFlagged() && affectedMessages.push(oMessage) && oMessage.flags.push('\\flagged')
 		);
 	} else if (iSetAction == MessageSetAction.UnsetFlag) {
 		messages.forEach(oMessage =>
-			oMessage.isFlagged() && rootUids.push(oMessage.uid) && oMessage.flags.remove('\\flagged')
+			oMessage.isFlagged() && affectedMessages.push(oMessage) && oMessage.flags.remove('\\flagged')
 		);
 	} else if (iSetAction == MessageSetAction.SetDeleted) {
 		messages.forEach(oMessage =>
-			!oMessage.isDeleted() && rootUids.push(oMessage.uid) && oMessage.flags.push('\\deleted')
+			!oMessage.isDeleted() && affectedMessages.push(oMessage) && oMessage.flags.push('\\deleted')
 		);
 	} else if (iSetAction == MessageSetAction.UnsetDeleted) {
 		messages.forEach(oMessage =>
-			oMessage.isDeleted() && rootUids.push(oMessage.uid) && oMessage.flags.remove('\\deleted')
+			oMessage.isDeleted() && affectedMessages.push(oMessage) && oMessage.flags.remove('\\deleted')
 		);
 	}
-	rootUids = rootUids.validUnique();
-	length = rootUids.length;
+	length = affectedMessages.length;
 
 	if (sFolderFullName && length) {
+		const accountGroups = new Map();
+		affectedMessages.forEach(oMessage => {
+			const accountHash = oMessage?.accountHash || SettingsGet('accountHash');
+			if (!accountGroups.has(accountHash)) {
+				accountGroups.set(accountHash, []);
+			}
+			accountGroups.get(accountHash).push(oMessage);
+		});
+
 		switch (iSetAction) {
 			case MessageSetAction.SetSeen:
 				length = -length;
@@ -399,28 +421,46 @@ MessagelistUserStore.setAction = (sFolderFullName, iSetAction, messages) => {
 				if (folder) {
 					folder.unreadEmails(Math.max(0, folder.unreadEmails() + length));
 				}
-				Remote.request('MessageSetSeen', null, {
-					folder: sFolderFullName,
-					uids: rootUids.join(','),
-					setAction: iSetAction == MessageSetAction.SetSeen ? 1 : 0
+				accountGroups.forEach((group, accountHash) => {
+					const uids = group.map(message => message.uid).validUnique();
+					if (uids.length) {
+						Remote.request('MessageSetSeen', null, {
+							folder: sFolderFullName,
+							uids: uids.join(','),
+							setAction: iSetAction == MessageSetAction.SetSeen ? 1 : 0,
+							accountHash
+						});
+					}
 				});
 				break;
 
 			case MessageSetAction.SetFlag:
 			case MessageSetAction.UnsetFlag:
-				Remote.request('MessageSetFlagged', null, {
-					folder: sFolderFullName,
-					uids: rootUids.join(','),
-					setAction: iSetAction == MessageSetAction.SetFlag ? 1 : 0
+				accountGroups.forEach((group, accountHash) => {
+					const uids = group.map(message => message.uid).validUnique();
+					if (uids.length) {
+						Remote.request('MessageSetFlagged', null, {
+							folder: sFolderFullName,
+							uids: uids.join(','),
+							setAction: iSetAction == MessageSetAction.SetFlag ? 1 : 0,
+							accountHash
+						});
+					}
 				});
 				break;
 
 			case MessageSetAction.SetDeleted:
 			case MessageSetAction.UnsetDeleted:
-				Remote.request('MessageSetDeleted', null, {
-					folder: sFolderFullName,
-					uids: rootUids.join(','),
-					setAction: iSetAction == MessageSetAction.SetDeleted ? 1 : 0
+				accountGroups.forEach((group, accountHash) => {
+					const uids = group.map(message => message.uid).validUnique();
+					if (uids.length) {
+						Remote.request('MessageSetDeleted', null, {
+							folder: sFolderFullName,
+							uids: uids.join(','),
+							setAction: iSetAction == MessageSetAction.SetDeleted ? 1 : 0,
+							accountHash
+						});
+					}
 				});
 				break;
 			// no default
@@ -445,14 +485,17 @@ MessagelistUserStore.moveMessages = (
 		setPage = 0,
 		currentMessage = MessageUserStore.message();
 
-	const toFolder = toFolderFullName ? getFolderFromCacheList(toFolderFullName) : null,
+	const messageItems = Array.isArray(oUids.messages) ? oUids.messages : [],
+		toFolder = toFolderFullName ? getFolderFromCacheList(toFolderFullName) : null,
 		trashFolder = FolderUserStore.trashFolder(),
 		spamFolder = FolderUserStore.spamFolder(),
 		page = MessagelistUserStore.page(),
 		messages =
-			FolderUserStore.currentFolderFullName() === fromFolderFullName
+			messageItems.length ? messageItems
+				: FolderUserStore.currentFolderFullName() === fromFolderFullName
 				? MessagelistUserStore.filter(item => item && oUids.has(item.uid))
 				: [],
+		messageCount = messages.length || oUids.size,
 		moveOrDeleteResponseHelper = (iError, oData) => {
 			if (iError) {
 				setFolderETag(FolderUserStore.currentFolderFullName(), '');
@@ -464,7 +507,7 @@ MessagelistUserStore.moveMessages = (
 					setFolderETag(FolderUserStore.currentFolderFullName(), '');
 				}
 
-				MessagelistUserStore.count(MessagelistUserStore.count() - oUids.size);
+				MessagelistUserStore.count(MessagelistUserStore.count() - messageCount);
 				if (page > MessagelistUserStore.pageCount()) {
 					setPage = MessagelistUserStore.pageCount();
 				}
@@ -488,13 +531,13 @@ MessagelistUserStore.moveMessages = (
 
 	if (!copy) {
 		fromFolder.etag = '';
-		fromFolder.totalEmails(Math.max(0, fromFolder.totalEmails() - oUids.size));
+		fromFolder.totalEmails(Math.max(0, fromFolder.totalEmails() - messageCount));
 		fromFolder.unreadEmails(Math.max(0, fromFolder.unreadEmails() - unseenCount));
 	}
 
 	if (toFolder) {
 		toFolder.etag = '';
-		toFolder.totalEmails(toFolder.totalEmails() + oUids.size);
+		toFolder.totalEmails(toFolder.totalEmails() + messageCount);
 		if (trashFolder !== toFolder.fullName && spamFolder !== toFolder.fullName) {
 			toFolder.unreadEmails(toFolder.unreadEmails() + unseenCount);
 		}
@@ -515,7 +558,8 @@ MessagelistUserStore.moveMessages = (
 					currentMessage = null;
 					fireEvent('mailbox.message.show', {
 						folder: next.folder,
-						uid: next.uid
+						uid: next.uid,
+						accountHash: next.accountHash || SettingsGet('accountHash')
 					});
 				}
 			}
@@ -532,29 +576,51 @@ MessagelistUserStore.moveMessages = (
 
 	if (toFolderFullName) {
 		if (toFolder && fromFolderFullName != toFolderFullName) {
-			const params =  {
-				fromFolder: fromFolderFullName,
-				toFolder: toFolderFullName,
-				uids: [...oUids].join(',')
-			};
-			if (copy) {
-				Remote.request('MessageCopy', null, params);
-			} else {
-				const
-					isSpam = spamFolder === toFolderFullName,
-					isHam = !isSpam && spamFolder === fromFolderFullName && getFolderInboxName() === toFolderFullName;
-				params.markAsRead = (isSpam || FolderUserStore.trashFolder() === toFolderFullName) ? 1 : 0;
-				params.learning = isSpam ? 'SPAM' : isHam ? 'HAM' : '';
-				Remote.abort('MessageList', 'reload').request('MessageMove', moveOrDeleteResponseHelper, params);
-			}
+			const grouped = new Map();
+			messages.forEach(message => {
+				const accountHash = message?.accountHash || SettingsGet('accountHash');
+				if (!grouped.has(accountHash)) {
+					grouped.set(accountHash, []);
+				}
+				grouped.get(accountHash).push(message);
+			});
+			grouped.forEach((group, accountHash) => {
+				const params =  {
+					fromFolder: fromFolderFullName,
+					toFolder: toFolderFullName,
+					uids: groupUidsWithThreads(group),
+					accountHash
+				};
+				if (copy) {
+					Remote.request('MessageCopy', null, params);
+				} else {
+					const
+						isSpam = spamFolder === toFolderFullName,
+						isHam = !isSpam && spamFolder === fromFolderFullName && getFolderInboxName() === toFolderFullName;
+					params.markAsRead = (isSpam || FolderUserStore.trashFolder() === toFolderFullName) ? 1 : 0;
+					params.learning = isSpam ? 'SPAM' : isHam ? 'HAM' : '';
+					Remote.abort('MessageList', 'reload').request('MessageMove', moveOrDeleteResponseHelper, params);
+				}
+			});
 		}
 	} else {
-		Remote.abort('MessageList', 'reload').request('MessageDelete',
-			moveOrDeleteResponseHelper,
-			{
-				folder: fromFolderFullName,
-				uids: [...oUids].join(',')
+		const grouped = new Map();
+		messages.forEach(message => {
+			const accountHash = message?.accountHash || SettingsGet('accountHash');
+			if (!grouped.has(accountHash)) {
+				grouped.set(accountHash, []);
 			}
-		);
+			grouped.get(accountHash).push(message);
+		});
+		grouped.forEach((group, accountHash) => {
+			Remote.abort('MessageList', 'reload').request('MessageDelete',
+				moveOrDeleteResponseHelper,
+				{
+					folder: fromFolderFullName,
+					uids: groupUidsWithThreads(group),
+					accountHash
+				}
+			);
+		});
 	}
 };

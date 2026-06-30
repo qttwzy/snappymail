@@ -30,6 +30,13 @@ dropdownsDetectVisibility = (() =>
 	dropdownVisibility(!!dropdowns.find(item => item.classList.contains('show')))
 ).debounce(50),
 
+messageAccountHash = message => message?.accountHash || SettingsGet('accountHash'),
+
+sameMessageIdentity = (message, json) => message && json
+	&& messageAccountHash(message) === messageAccountHash(json)
+	&& message.folder === json.folder
+	&& message.uid == json.uid,
+
 
 editIdentity = Identity => showScreenPopup(IdentityPopupView, [Identity]),
 
@@ -346,13 +353,9 @@ populateMessageBody = (oMessage, popup) => {
 				} else {
 					let json = oData?.Result;
 					if (json
-						&& ((
-								oMessage.hash && oMessage.hash === json.hash
-							) || (
-								!oMessage.hash
-								&& oMessage.folder === json.folder
-								&& oMessage.uid == json.uid)
-						)
+						&& (sameMessageIdentity(oMessage, json)
+							|| (oMessage.hash && oMessage.hash === json.hash
+								&& messageAccountHash(oMessage) === messageAccountHash(json)))
 						&& oMessage.revivePropertiesFromJson(json)
 					) {
 /*
@@ -365,7 +368,7 @@ populateMessageBody = (oMessage, popup) => {
 					}
 				}
 				popup || MessageUserStore.loading(false);
-			}, oMessage.folder, oMessage.uid);
+			}, oMessage.folder, oMessage.uid, oMessage.accountHash);
 		}
 	}
 };
