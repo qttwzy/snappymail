@@ -37,6 +37,16 @@ sameMessageIdentity = (message, json) => message && json
 	&& message.folder === json.folder
 	&& message.uid == json.uid,
 
+messageBodyValue = value => 'function' === typeof value ? value() : value,
+
+hasLoadedMessageBody = message => !!(message && (
+	messageBodyValue(message.html) || messageBodyValue(message.plain)
+)),
+
+prefetchedMessageBody = message => message && MessagelistUserStore.find(
+	item => sameMessageIdentity(item, message) && hasLoadedMessageBody(item)
+),
+
 
 editIdentity = Identity => showScreenPopup(IdentityPopupView, [Identity]),
 
@@ -339,8 +349,11 @@ viewMessage = (oMessage, popup) => {
 
 populateMessageBody = (oMessage, popup) => {
 	if (oMessage) {
+		if (!hasLoadedMessageBody(oMessage)) {
+			oMessage = prefetchedMessageBody(oMessage) || oMessage;
+		}
 		popup || MessageUserStore.message(oMessage);
-		if (oMessage.body) {
+		if (oMessage.body || hasLoadedMessageBody(oMessage)) {
 			viewMessage(oMessage, popup);
 		} else {
 			popup || MessageUserStore.loading(true);

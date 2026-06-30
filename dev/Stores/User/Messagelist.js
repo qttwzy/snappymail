@@ -107,7 +107,9 @@ addComputablesTo(MessagelistUserStore, {
 		| MessagelistUserStore.isDraftFolder()
 		| MessagelistUserStore.isSpamFolder()),
 
-	pageCount: () => Math.max(1, Math.ceil(MessagelistUserStore.count() / SettingsUserStore.messagesPerPage())),
+	pageCount: () => 'AllUnread' === MessagelistUserStore().folder
+		? 1
+		: Math.max(1, Math.ceil(MessagelistUserStore.count() / SettingsUserStore.messagesPerPage())),
 
 	mainSearch: {
 		read: MessagelistUserStore.listSearch,
@@ -202,7 +204,8 @@ let prevFolderName;
  */
 MessagelistUserStore.reload = (bDropPagePosition = false, bDropCurrentFolderCache = false) => {
 	let iOffset = (MessagelistUserStore.page() - 1) * SettingsUserStore.messagesPerPage(),
-		folderName = FolderUserStore.currentFolderFullName();
+		folderName = FolderUserStore.currentFolderFullName(),
+		isAllUnread = 'AllUnread' === folderName;
 //		folderName = FolderUserStore.currentFolder() ? self.currentFolder().fullName : '');
 
 	if (bDropCurrentFolderCache) {
@@ -237,8 +240,8 @@ MessagelistUserStore.reload = (bDropPagePosition = false, bDropCurrentFolderCach
 		folderETag = folder?.etag || '',
 		params = {
 			folder: folderName,
-			offset: iOffset,
-			limit: SettingsUserStore.messagesPerPage(),
+			offset: isAllUnread ? 0 : iOffset,
+			limit: isAllUnread ? 0 : SettingsUserStore.messagesPerPage(),
 			uidNext: folder?.uidNext || 0, // Used to check for new messages
 			sort: FolderUserStore.sortMode(),
 			search: MessagelistUserStore.listSearch()
@@ -292,7 +295,10 @@ MessagelistUserStore.reload = (bDropPagePosition = false, bDropCurrentFolderCach
 					MessagelistUserStore.count(collection.totalEmails);
 					MessagelistUserStore.listSearch(pString(collection.search));
 					MessagelistUserStore.listLimited(!!collection.limited);
-					MessagelistUserStore.page(Math.ceil(collection.offset / SettingsUserStore.messagesPerPage() + 1));
+					MessagelistUserStore.page(isAllUnread
+						? 1
+						: Math.ceil(collection.offset / SettingsUserStore.messagesPerPage() + 1)
+					);
 					MessagelistUserStore.threadUid(collection.threadUid);
 
 					MessagelistUserStore.endHash(

@@ -308,7 +308,10 @@ class MailClient
 		$oInfo->MESSAGES = $oMessageCollection->totalEmails;
 		$oInfo->UNSEEN = $oMessageCollection->totalEmails;
 		$oInfo->etag = \md5('AllUnread/' . $oMessageCollection->totalEmails);
-		$oMessageCollection->exchangeArray(\array_slice($aRows, $oParams->iOffset, $oParams->iLimit));
+		$oMessageCollection->exchangeArray($oParams->iLimit
+			? \array_slice($aRows, $oParams->iOffset, $oParams->iLimit)
+			: $aRows
+		);
 
 		return $oMessageCollection;
 	}
@@ -983,15 +986,17 @@ class MailClient
 		if (0 > $oParams->iOffset || 0 > $oParams->iLimit) {
 			throw new \ValueError;
 		}
+
+		$sSearch = \trim($oParams->sSearch);
+		if ('AllUnread' === $oParams->sFolderName) {
+			$oParams->sSearch = $sSearch;
+			return $this->MessageListAllUnread($oParams);
+		}
+
 		if (10 > $oParams->iLimit) {
 			$oParams->iLimit = 10;
 		} else if (999 < $oParams->iLimit) {
 			$oParams->iLimit = 50;
-		}
-
-		$sSearch = \trim($oParams->sSearch);
-		if ('AllUnread' === $oParams->sFolderName) {
-			return $this->MessageListAllUnread($oParams);
 		}
 
 		$oMessageCollection = new MessageCollection;
