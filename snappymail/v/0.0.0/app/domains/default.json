@@ -1,6 +1,6 @@
 {
     "IMAP": {
-        "host": "docker-mailserver",
+        "host": "localhost",
         "port": 143,
         "type": 0,
         "timeout": 300,
@@ -36,7 +36,7 @@
         "search_filter": ""
     },
     "SMTP": {
-        "host": "docker-mailserver",
+        "host": "localhost",
         "port": 25,
         "type": 0,
         "timeout": 60,
@@ -63,7 +63,7 @@
         "usePhpMail": false
     },
     "Sieve": {
-        "host": "docker-mailserver",
+        "host": "localhost",
         "port": 4190,
         "type": 0,
         "timeout": 10,
@@ -85,7 +85,7 @@
             "disable_compression": true,
             "security_level": 1
         },
-        "enabled": true
+        "enabled": false
     },
     "whiteList": ""
 }

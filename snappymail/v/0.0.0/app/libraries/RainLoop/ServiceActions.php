@@ -289,6 +289,8 @@ class ServiceActions
 				\header('X-Content-Location: '.$sUrl);
 				$tmp = \tmpfile();
 				$HTTP = \SnappyMail\HTTP\Request::factory();
+				$HTTP->proxy = $this->Config()->Get('labs', 'curl_proxy', '');
+				$HTTP->proxy_auth = $this->Config()->Get('labs', 'curl_proxy_auth', '');
 				$HTTP->max_redirects = 2;
 				$HTTP->streamBodyTo($tmp);
 				$oResponse = $HTTP->doRequest('GET', $sUrl);
