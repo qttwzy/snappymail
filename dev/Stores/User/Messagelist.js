@@ -61,6 +61,12 @@ const
 			folder.expires = 0;
 		}
 	},
+	isAllUnreadSourceFolder = folderName => {
+		const inboxFolder = getFolderInboxName() || 'INBOX',
+			spamFolder = FolderUserStore.spamFolder();
+		return inboxFolder === folderName
+			|| (spamFolder && UNUSED_OPTION_VALUE !== spamFolder && spamFolder === folderName);
+	},
 	disableAutoSelect = ko.observable(false).extend({ falseTimeout: 500 });
 
 export const MessagelistUserStore = ko.observableArray().extend({ debounce: 0 });
@@ -427,7 +433,8 @@ MessagelistUserStore.setAction = (sFolderFullName, iSetAction, messages) => {
 				actionGroups.set(groupKey, { accountHash, folderName, messages: [] });
 			}
 			actionGroups.get(groupKey).messages.push(oMessage);
-			if ('INBOX' === oMessage.folder) {
+			if ('AllUnread' === sFolderFullName
+				|| isAllUnreadSourceFolder(oMessage.folder || folderName)) {
 				++allUnreadLength;
 			}
 		});

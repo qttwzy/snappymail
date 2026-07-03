@@ -34,7 +34,7 @@ class MailClient
 
 	private const DEFAULT_MESSAGE_CACHE_TTL = 604800;
 
-	private const ALL_UNREAD_LIST_CACHE_KEY = 'AllUnread/List';
+	private const ALL_UNREAD_LIST_CACHE_KEY = 'AllUnread/List/v2';
 
 	private int $iMessageCacheTtl = self::DEFAULT_MESSAGE_CACHE_TTL;
 
@@ -254,17 +254,144 @@ class MailClient
 		}
 	}
 
+	private function normalizeAllUnreadFolderName(string $sFolderName) : string
+	{
+		return \mb_strtolower(\trim($sFolderName));
+	}
+
+	private function addAllUnreadFolderName(array &$aFolders, string $sFolderName) : void
+	{
+		$sFolderName = \trim($sFolderName);
+		if ('' !== $sFolderName) {
+			$aFolders[$this->normalizeAllUnreadFolderName($sFolderName)] = $sFolderName;
+		}
+	}
+
+	private function isKnownJunkFolderName(\MailSo\Imap\Folder $oFolder) : bool
+	{
+		$aKnownNames = [
+			'spam',
+			'junk',
+			'junk email',
+			'junk e-mail',
+			'bulk mail',
+			'垃圾邮件',
+			'垃圾郵件'
+		];
+
+		return \in_array($this->normalizeAllUnreadFolderName($oFolder->FullName), $aKnownNames, true)
+			|| \in_array($this->normalizeAllUnreadFolderName($oFolder->Name()), $aKnownNames, true);
+	}
+
+	private function getAllUnreadConfiguredJunkFolder(\RainLoop\Model\Account $oAccount) : array
+	{
+		$sConfiguredJunkFolder = '';
+		$bJunkFolderDisabled = false;
+		try
+		{
+			$oSettingsLocal = \RainLoop\Api::Actions()->SettingsProvider(true)->Load($oAccount);
+			if ($oSettingsLocal instanceof \RainLoop\Settings) {
+				$sConfiguredJunkFolder = \trim((string) $oSettingsLocal->GetConf('JunkFolder', ''));
+				$bJunkFolderDisabled = '__UNUSE__' === $sConfiguredJunkFolder;
+			}
+		}
+		catch (\Throwable $oException)
+		{
+			\SnappyMail\Log::warning('MailClient', 'AllUnread settings ' . $oAccount->Email() . ' ' . $oException->getMessage());
+		}
+
+		return [$sConfiguredJunkFolder, $bJunkFolderDisabled];
+	}
+
+	private function getAllUnreadFolderNamesForAccount(\RainLoop\Model\Account $oAccount, ?iterable $oFolders = null, ?array $aConfiguredJunkFolder = null) : array
+	{
+		$aFolders = [];
+		$this->addAllUnreadFolderName($aFolders, 'INBOX');
+
+		[$sConfiguredJunkFolder, $bJunkFolderDisabled] = $aConfiguredJunkFolder ?: $this->getAllUnreadConfiguredJunkFolder($oAccount);
+		if (!$bJunkFolderDisabled) {
+			$this->addAllUnreadFolderName($aFolders, $sConfiguredJunkFolder);
+		}
+
+		if ($oFolders) {
+			$sConfiguredJunkFolderKey = $this->normalizeAllUnreadFolderName($sConfiguredJunkFolder);
+			$bHasConfiguredJunkFolder = !$bJunkFolderDisabled && '' !== $sConfiguredJunkFolderKey;
+			$bConfiguredJunkFolderFound = !$bHasConfiguredJunkFolder;
+			foreach ($oFolders as $oFolder) {
+				if (!$oFolder instanceof \MailSo\Imap\Folder || !$oFolder->Selectable()) {
+					continue;
+				}
+
+				$sFolderKey = $this->normalizeAllUnreadFolderName($oFolder->FullName);
+				if (isset($aFolders[$sFolderKey])) {
+					$aFolders[$sFolderKey] = $oFolder->FullName;
+				}
+				if ($sConfiguredJunkFolderKey === $sFolderKey) {
+					$bConfiguredJunkFolderFound = true;
+				}
+			}
+
+			if ($bHasConfiguredJunkFolder && !$bConfiguredJunkFolderFound) {
+				unset($aFolders[$sConfiguredJunkFolderKey]);
+			}
+
+			if (!$bJunkFolderDisabled && (!$bHasConfiguredJunkFolder || !$bConfiguredJunkFolderFound)) {
+				foreach ($oFolders as $oFolder) {
+					if ($oFolder instanceof \MailSo\Imap\Folder
+						&& $oFolder->Selectable()
+						&& \in_array($oFolder->Role(), ['junk', 'spam'], true)
+					) {
+						$this->addAllUnreadFolderName($aFolders, $oFolder->FullName);
+					}
+				}
+				foreach ($oFolders as $oFolder) {
+					if ($oFolder instanceof \MailSo\Imap\Folder
+						&& $oFolder->Selectable()
+						&& $this->isKnownJunkFolderName($oFolder)
+					) {
+						$this->addAllUnreadFolderName($aFolders, $oFolder->FullName);
+					}
+				}
+			}
+		}
+
+		return \array_values($aFolders);
+	}
+
 	private function getAllUnreadCount() : int
 	{
 		$iUnread = 0;
 		foreach ($this->getAllUnreadAccounts() as $oAccount) {
 			try
 			{
-				$oImapClient = new \MailSo\Imap\ImapClient;
-				$oImapClient->SetLogger($this->Logger());
+				$oAccountMailClient = new self;
+				$oAccountMailClient->SetLogger($this->Logger());
+				$oImapClient = $oAccountMailClient->ImapClient();
 				$oAccount->ImapConnectAndLogin(\RainLoop\Api::Actions()->Plugins(), $oImapClient, \RainLoop\Api::Actions()->Config());
-				$oFolderInfo = $oImapClient->FolderStatus('INBOX');
-				$iUnread += \max(0, (int) $oFolderInfo->UNSEEN);
+				$oFolders = null;
+				$aConfiguredJunkFolder = $this->getAllUnreadConfiguredJunkFolder($oAccount);
+				if (!$aConfiguredJunkFolder[1] && '' === $aConfiguredJunkFolder[0]) {
+					try
+					{
+						$oFolders = $oAccountMailClient->Folders('', '*', false);
+					}
+					catch (\Throwable $oException)
+					{
+						\SnappyMail\Log::warning('MailClient', 'AllUnread folders ' . $oAccount->Email() . ' ' . $oException->getMessage());
+					}
+				}
+
+				foreach ($this->getAllUnreadFolderNamesForAccount($oAccount, $oFolders, $aConfiguredJunkFolder) as $sFolderName) {
+					try
+					{
+						$oFolderInfo = $oImapClient->FolderStatus($sFolderName);
+						$iUnread += \max(0, (int) $oFolderInfo->UNSEEN);
+					}
+					catch (\Throwable $oException)
+					{
+						\SnappyMail\Log::warning('MailClient', 'AllUnread ' . $oAccount->Email() . ' ' . $sFolderName . ' ' . $oException->getMessage());
+					}
+				}
 			}
 			catch (\Throwable $oException)
 			{
@@ -383,8 +510,11 @@ class MailClient
 					continue;
 				}
 
+				$aAllUnreadFolders = \array_flip(\array_map([$this, 'normalizeAllUnreadFolderName'], $this->getAllUnreadFolderNamesForAccount($oAccount, $oFolders)));
 				foreach ($oFolders as $oFolder) {
-					if ('INBOX' !== $oFolder->FullName || !$oFolder->Selectable()) {
+					if (!$oFolder->Selectable()
+						|| !isset($aAllUnreadFolders[$this->normalizeAllUnreadFolderName($oFolder->FullName)])
+					) {
 						continue;
 					}
 
