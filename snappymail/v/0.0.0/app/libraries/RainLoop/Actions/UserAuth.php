@@ -451,11 +451,11 @@ trait UserAuth
 			}
 			$oAccount->ImapConnectAndLogin($this->Plugins(), $oImapClient, $this->Config());
 			$sAccountHash = $oAccount->Hash();
-			if ($oImapClient->Settings) {
+			if (isset($oImapClient->Settings)) {
 				$oImapClient->Settings->accountHash = $sAccountHash;
 			}
 			$oMailClientImap = $this->MailClient()->ImapClient();
-			if ($oMailClientImap->Settings) {
+			if (isset($oMailClientImap->Settings)) {
 				$oMailClientImap->Settings->accountHash = $sAccountHash;
 			}
 		} catch (ClientException $oException) {
