@@ -179,7 +179,6 @@ trait UserAuth
 
 			$this->SetAuthToken($oAccount);
 			$this->SetAdditionalAuthToken(null);
-			$this->RegisterAllUnreadPrewarmAccount($oAccount);
 		}
 
 		return $oAccount;
@@ -330,6 +329,7 @@ trait UserAuth
 	{
 		$this->SetMainAuthAccount($oAccount);
 		Cookies::setSecure(self::AUTH_SPEC_TOKEN_KEY, $oAccount);
+		$this->RegisterAllUnreadPrewarmAccount($oAccount);
 	}
 
 	public function SetAdditionalAuthToken(?AdditionalAccount $oAccount): void
@@ -450,8 +450,14 @@ trait UserAuth
 				$oImapClient = $this->ImapClient();
 			}
 			$oAccount->ImapConnectAndLogin($this->Plugins(), $oImapClient, $this->Config());
-			$oImapClient->Settings->accountHash = $oAccount->Hash();
-			$this->MailClient()->ImapClient()->Settings->accountHash = $oAccount->Hash();
+			$sAccountHash = $oAccount->Hash();
+			if ($oImapClient->Settings) {
+				$oImapClient->Settings->accountHash = $sAccountHash;
+			}
+			$oMailClientImap = $this->MailClient()->ImapClient();
+			if ($oMailClientImap->Settings) {
+				$oMailClientImap->Settings->accountHash = $sAccountHash;
+			}
 		} catch (ClientException $oException) {
 			throw $oException;
 		} catch (\MailSo\Net\Exceptions\ConnectionException $oException) {
