@@ -52,12 +52,12 @@ class AdditionalAccount extends Account
 			if ($sPasswordHMAC) {
 				if ($sPasswordHMAC === \hash_hmac('sha1', $aAccountHash['pass'], $sHash)) {
 					$aAccountHash['pass'] = \SnappyMail\Crypt::DecryptUrlSafe($aAccountHash['pass'], $sHash);
-					if (!empty($aData['smtp']['pass'])) {
+					if (!empty($aAccountHash['smtp']['pass'])) {
 						$aAccountHash['smtp']['pass'] = \SnappyMail\Crypt::DecryptUrlSafe($aAccountHash['smtp']['pass'], $sHash);
 					}
 				} else {
 					$aAccountHash['pass'] = '';
-					if (!empty($aData['smtp']['pass'])) {
+					if (!empty($aAccountHash['smtp']['pass'])) {
 						$aAccountHash['smtp']['pass'] = '';
 					}
 				}
