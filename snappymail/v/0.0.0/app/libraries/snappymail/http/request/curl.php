@@ -66,6 +66,20 @@ class CURL extends \SnappyMail\HTTP\Request
 			}
 		}
 		if ($this->proxy) {
+			$sProxyScheme = \strtolower((string) \parse_url($this->proxy, PHP_URL_SCHEME));
+			if ('socks5h' === $sProxyScheme && \defined('CURLPROXY_SOCKS5_HOSTNAME')) {
+				\curl_setopt($c, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5_HOSTNAME);
+			} else if ('socks5' === $sProxyScheme && \defined('CURLPROXY_SOCKS5')) {
+				\curl_setopt($c, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5);
+			} else if ('socks4a' === $sProxyScheme && \defined('CURLPROXY_SOCKS4A')) {
+				\curl_setopt($c, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS4A);
+			} else if ('socks4' === $sProxyScheme && \defined('CURLPROXY_SOCKS4')) {
+				\curl_setopt($c, CURLOPT_PROXYTYPE, CURLPROXY_SOCKS4);
+			} else if ('https' === $sProxyScheme && \defined('CURLPROXY_HTTPS')) {
+				\curl_setopt($c, CURLOPT_PROXYTYPE, CURLPROXY_HTTPS);
+			} else if ('http' === $sProxyScheme && \defined('CURLPROXY_HTTP')) {
+				\curl_setopt($c, CURLOPT_PROXYTYPE, CURLPROXY_HTTP);
+			}
 			\curl_setopt($c, CURLOPT_PROXY, $this->proxy);
 			if ($this->proxy_auth) {
 				\curl_setopt($c, CURLOPT_PROXYUSERPWD, $this->proxy_auth);

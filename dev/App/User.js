@@ -199,6 +199,7 @@ export class AppUser extends AbstractApp {
 						setTimeout(() => {
 							const cF = FolderUserStore.currentFolderFullName();
 							getFolderInboxName() === cF || folderInformation(cF);
+							folderInformation('AllUnread');
 							FolderUserStore.hasCapability('LIST-STATUS') || folderInformationMultiply(true);
 						}, 1000);
 

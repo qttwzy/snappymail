@@ -55,6 +55,8 @@ FolderUserStore = new class {
 				fullName: 'AllUnread',
 				fullNameHash: 'AllUnread',
 				etag: '',
+				expires: 0,
+				uidNext: 0,
 				exists: true,
 				attributes: ko.observableArray(),
 				permanentFlags: ko.observableArray(),
@@ -227,6 +229,9 @@ FolderUserStore = new class {
 			};
 
 		fSearchFunction(this.folderList());
+		if (this.allUnreadFolder?.selectable() && this.allUnreadFolder.exists && timeout > this.allUnreadFolder.expires) {
+			timeouts.push([this.allUnreadFolder.expires, this.allUnreadFolder.fullName]);
+		}
 
 		timeouts.sort((a, b) => (a[0] < b[0]) ? -1 : (a[0] > b[0] ? 1 : 0));
 

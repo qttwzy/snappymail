@@ -54,6 +54,13 @@ const
 		hasher.replaceHash(hash);
 		rl.route.on();
 	},
+	updateAllUnreadUnreadCount = delta => {
+		const folder = FolderUserStore.allUnreadFolder;
+		if (folder && delta) {
+			folder.unreadEmails(Math.max(0, folder.unreadEmails() + delta));
+			folder.expires = 0;
+		}
+	},
 	disableAutoSelect = ko.observable(false).extend({ falseTimeout: 500 });
 
 export const MessagelistUserStore = ko.observableArray().extend({ debounce: 0 });
@@ -409,32 +416,41 @@ MessagelistUserStore.setAction = (sFolderFullName, iSetAction, messages) => {
 	length = affectedMessages.length;
 
 	if (sFolderFullName && length) {
-		const accountGroups = new Map();
+		const actionGroups = new Map();
+		let allUnreadLength = 0;
 		affectedMessages.forEach(oMessage => {
-			const accountHash = oMessage?.accountHash || SettingsGet('accountHash');
-			if (!accountGroups.has(accountHash)) {
-				accountGroups.set(accountHash, []);
+			const
+				accountHash = oMessage?.accountHash || SettingsGet('accountHash'),
+				folderName = 'AllUnread' === sFolderFullName ? (oMessage.folder || sFolderFullName) : sFolderFullName,
+				groupKey = accountHash + '\n' + folderName;
+			if (!actionGroups.has(groupKey)) {
+				actionGroups.set(groupKey, { accountHash, folderName, messages: [] });
 			}
-			accountGroups.get(accountHash).push(oMessage);
+			actionGroups.get(groupKey).messages.push(oMessage);
+			if ('INBOX' === oMessage.folder) {
+				++allUnreadLength;
+			}
 		});
 
 		switch (iSetAction) {
 			case MessageSetAction.SetSeen:
 				length = -length;
+				allUnreadLength = -allUnreadLength;
 				// fallthrough is intentionally
 			case MessageSetAction.UnsetSeen:
 				folder = getFolderFromCacheList(sFolderFullName);
-				if (folder) {
+				if (folder && 'AllUnread' !== folder.fullName) {
 					folder.unreadEmails(Math.max(0, folder.unreadEmails() + length));
 				}
-				accountGroups.forEach((group, accountHash) => {
-					const uids = group.map(message => message.uid).validUnique();
+				updateAllUnreadUnreadCount(allUnreadLength);
+				actionGroups.forEach(group => {
+					const uids = group.messages.map(message => message.uid).validUnique();
 					if (uids.length) {
 						Remote.request('MessageSetSeen', null, {
-							folder: sFolderFullName,
+							folder: group.folderName,
 							uids: uids.join(','),
 							setAction: iSetAction == MessageSetAction.SetSeen ? 1 : 0,
-							accountHash
+							accountHash: group.accountHash
 						});
 					}
 				});
@@ -442,14 +458,14 @@ MessagelistUserStore.setAction = (sFolderFullName, iSetAction, messages) => {
 
 			case MessageSetAction.SetFlag:
 			case MessageSetAction.UnsetFlag:
-				accountGroups.forEach((group, accountHash) => {
-					const uids = group.map(message => message.uid).validUnique();
+				actionGroups.forEach(group => {
+					const uids = group.messages.map(message => message.uid).validUnique();
 					if (uids.length) {
 						Remote.request('MessageSetFlagged', null, {
-							folder: sFolderFullName,
+							folder: group.folderName,
 							uids: uids.join(','),
 							setAction: iSetAction == MessageSetAction.SetFlag ? 1 : 0,
-							accountHash
+							accountHash: group.accountHash
 						});
 					}
 				});
@@ -457,14 +473,14 @@ MessagelistUserStore.setAction = (sFolderFullName, iSetAction, messages) => {
 
 			case MessageSetAction.SetDeleted:
 			case MessageSetAction.UnsetDeleted:
-				accountGroups.forEach((group, accountHash) => {
-					const uids = group.map(message => message.uid).validUnique();
+				actionGroups.forEach(group => {
+					const uids = group.messages.map(message => message.uid).validUnique();
 					if (uids.length) {
 						Remote.request('MessageSetDeleted', null, {
-							folder: sFolderFullName,
+							folder: group.folderName,
 							uids: uids.join(','),
 							setAction: iSetAction == MessageSetAction.SetDeleted ? 1 : 0,
-							accountHash
+							accountHash: group.accountHash
 						});
 					}
 				});

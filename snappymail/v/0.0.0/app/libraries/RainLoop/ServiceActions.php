@@ -293,7 +293,13 @@ class ServiceActions
 				$HTTP->proxy_auth = $this->Config()->Get('labs', 'curl_proxy_auth', '');
 				$HTTP->max_redirects = 2;
 				$HTTP->streamBodyTo($tmp);
-				$oResponse = $HTTP->doRequest('GET', $sUrl);
+				try {
+					$oResponse = $HTTP->doRequest('GET', $sUrl);
+				} catch (\Throwable $e) {
+					\header("X-Content-Error: {$e->getMessage()}");
+					\SnappyMail\Log::error('Proxy', \get_class($HTTP) . ': ' . $e->getMessage());
+					$oResponse = null;
+				}
 				if ($oResponse) {
 					$sContentType = \SnappyMail\File\MimeType::fromStream($tmp) ?: $oResponse->getHeader('content-type');
 					if (200 === $oResponse->status && \str_starts_with($sContentType, 'image/')) {
